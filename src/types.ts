@@ -1,5 +1,11 @@
 export type TaskPriority = 'low' | 'medium' | 'high';
 
+export interface SubTask {
+  id: string;
+  title: string;
+  completed: boolean;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -18,6 +24,8 @@ export interface Task {
   googleEventId?: string;
   syncWithGoogle?: boolean;
   reminderMinutes?: number; // Minutes before dueTime for reminder
+  subtasks?: SubTask[];
+  isPriorityDay?: boolean; // Elite Top 3 active priorities for the day
 }
 
 export interface TaskState {

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { TaskProvider, useTasks } from './context/TaskContext';
 import { Task, TaskPriority } from './types';
+import { SyncQueueDB } from './lib/syncQueueDb';
 import TaskModal from './components/TaskModal';
 import PomodoroTimer from './components/PomodoroTimer';
 import PlanningDocument from './components/PlanningDocument';
@@ -40,7 +41,8 @@ import {
   HardDrive,
   CloudUpload,
   CloudDownload,
-  Bell
+  Bell,
+  Star
 } from 'lucide-react';
 
 function DashboardContent() {
@@ -102,6 +104,126 @@ function DashboardContent() {
   const [driveStatus, setDriveStatus] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [activeReminderPopoverTaskId, setActiveReminderPopoverTaskId] = useState<string | null>(null);
   const [subView, setSubView] = useState<'board' | 'list'>('board');
+
+  // Daily Reset & Ritual states
+  const [isOpeningRitualVisible, setIsOpeningRitualVisible] = useState(() => {
+    const lastDate = localStorage.getItem('citrino_last_ritual_date');
+    const todayStr = new Date().toLocaleDateString();
+    return lastDate !== todayStr;
+  });
+  const [priorityLimitWarning, setPriorityLimitWarning] = useState<string | null>(null);
+
+  // Breathing loop state inside Ritual
+  const [breathingPhase, setBreathingPhase] = useState<'inspire' | 'segure' | 'expire'>('inspire');
+  const [breathingSecondsLeft, setBreathingSecondsLeft] = useState(4);
+
+  // Quick inputs in Ritual board
+  const [ritualNewTaskTitle, setRitualNewTaskTitle] = useState('');
+  const [ritualNewTaskCategory, setRitualNewTaskCategory] = useState('Estudo');
+  const [ritualNewTaskPriority, setRitualNewTaskPriority] = useState<TaskPriority>('medium');
+
+  // 100% Celebration states
+  const [showSuccessCelebration, setShowSuccessCelebration] = useState(false);
+  const [hasCelebratedToday, setHasCelebratedToday] = useState(false);
+
+  // Reactive verification for 100% completion of selected Daily Priorities
+  const dayPriorityTasks = tasks.filter(t => t.isPriorityDay);
+  const totalPrioritiesCount = dayPriorityTasks.length;
+  const completedPrioritiesCount = dayPriorityTasks.filter(t => t.completed).length;
+
+  useEffect(() => {
+    if (totalPrioritiesCount > 0 && completedPrioritiesCount === totalPrioritiesCount) {
+      if (!hasCelebratedToday) {
+        setShowSuccessCelebration(true);
+        setHasCelebratedToday(true);
+        // Dispatch elegant success confetti stream
+        setTimeout(() => {
+          try {
+            (window as any).confetti?.({
+              particleCount: 120,
+              spread: 80,
+              origin: { y: 0.4 },
+              colors: ['#f59e0b', '#3b82f6', '#10b981', '#ffffff', '#ec4899', '#38bdf8']
+            });
+          } catch (e) {
+            console.warn('Success animation confetti trigger error:', e);
+          }
+        }, 150);
+      }
+    } else if (completedPrioritiesCount < totalPrioritiesCount) {
+      // Reset flag if items are untoggled
+      setHasCelebratedToday(false);
+    }
+  }, [completedPrioritiesCount, totalPrioritiesCount, hasCelebratedToday]);
+
+  // Interactive guide for calming breathing during Ritual
+  useEffect(() => {
+    if (!isOpeningRitualVisible) return;
+
+    const interval = setInterval(() => {
+      setBreathingSecondsLeft((prev) => {
+        if (prev <= 1) {
+          setBreathingPhase((phase) => {
+            if (phase === 'inspire') return 'segure';
+            if (phase === 'segure') return 'expire';
+            return 'inspire';
+          });
+          return 4;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isOpeningRitualVisible, breathingPhase]);
+
+  // Helper to handle and regulate the star toggle for top 3 focal items
+  const handleTogglePriorityDay = (task: Task, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    if (!task.isPriorityDay) {
+      // User is checking ON. Verify 3 cap limit!
+      const activePriorityCount = tasks.filter(t => t.isPriorityDay && !t.completed).length;
+      if (activePriorityCount >= 3) {
+        setPriorityLimitWarning('Foco absoluto: escolha no máximo 3 tarefas para seu Top Diário para reduzir sobrecarga de dados!');
+        setTimeout(() => setPriorityLimitWarning(null), 5000);
+        return;
+      }
+    }
+
+    updateTask(task.id, { isPriorityDay: !task.isPriorityDay });
+    if (soundEnabled) {
+      playHoverTickSound();
+    }
+  };
+
+  // Helper to quick-add tasks directly from the Daily Opening Ritual panel
+  const handleCreateQuickTaskInRitual = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ritualNewTaskTitle.trim()) return;
+
+    // Determine if we can automatically mark it as a priority day focus
+    const activePriorityCount = tasks.filter(t => t.isPriorityDay && !t.completed).length;
+    const shouldMarkAsPriority = activePriorityCount < 3;
+
+    addTask({
+      title: ritualNewTaskTitle,
+      dueDate: new Date().toISOString().split('T')[0],
+      dueTime: '08:00',
+      priority: ritualNewTaskPriority,
+      category: ritualNewTaskCategory,
+      pomodorosTarget: 1,
+      recurrence: 'none',
+      syncWithGoogle: false,
+      isPriorityDay: shouldMarkAsPriority,
+      subtasks: []
+    });
+
+    setRitualNewTaskTitle('');
+    if (soundEnabled) {
+      playHoverTickSound();
+    }
+  };
 
   const isCurrentlyOffline = !navigator.onLine || isOfflineSimulated;
 
@@ -171,61 +293,65 @@ function DashboardContent() {
   const TASK_TEMPLATES = [
     {
       id: 'tpl-estudo',
-      name: 'Rotina de Estudos de Dev',
+      name: 'Foco nos Estudos',
       icon: '🚀',
       category: 'Estudo',
-      description: 'Kit de estudos TypeScript Citrino (3 tarefas)',
+      description: 'Estruturação completa de estudo de React e TypeScript (com checklists prontos)',
       tasks: [
         {
-          title: 'Revisar tipos complexos de TypeScript & Generics',
-          description: 'Focalizar em utilitários de tipos, mapeamentos de tipos e heranças.',
-          priority: 'medium',
-          category: 'Estudo',
-          pomodorosTarget: 2,
-        },
-        {
-          title: 'Ajustar componente de drag and drop do Canva',
-          description: 'Estudar os hooks locais, o dragover e drop nativos.',
+          title: 'Dominar Core de React e Hooks Avançados',
+          description: 'Aprofundamento em ciclos de render e hooks de controle de referência.',
           priority: 'high',
           category: 'Estudo',
           pomodorosTarget: 3,
+          subtasks: [
+            { id: 'sub-react-1', title: 'Compreender sincronização segura com useEffect', completed: false },
+            { id: 'sub-react-2', title: 'Otimizar renderings usando useMemo e useCallback', completed: false },
+            { id: 'sub-react-3', title: 'Construir Contextos Globais de Estado escaláveis', completed: false }
+          ]
         },
         {
-          title: 'Testar fila de sincronização offline e debounce',
-          description: 'Mudar a conexão para offline simulado e ver a fila carregar.',
-          priority: 'low',
+          title: 'Aprofundar em TypeScript & Generics',
+          description: 'Criação de utilitários flexíveis e fortes tipagens.',
+          priority: 'medium',
           category: 'Estudo',
-          pomodorosTarget: 1,
+          pomodorosTarget: 2,
+          subtasks: [
+            { id: 'sub-ts-1', title: 'Construir generic key-value store para SQLite local', completed: false },
+            { id: 'sub-ts-2', title: 'Implementar guards e asserções customizadas de tipo', completed: false }
+          ]
         }
       ]
     },
     {
-      id: 'tpl-casa',
-      name: 'Organização Doméstica',
-      icon: '🏠',
-      category: 'Pessoal',
-      description: 'Mantenha a mesa e setup limpos para foco em programação.',
+      id: 'tpl-mensal',
+      name: 'Organização Mensal',
+      icon: '📅',
+      category: 'Finanças',
+      description: 'Checklist completo para organizar o planejamento e finanças do MVP',
       tasks: [
         {
-          title: 'Limpar e otimizar setup físico de trabalho',
-          description: 'Limpar poeira, calibrar monitor, arrumar fios e preparar água.',
-          priority: 'low',
-          category: 'Pessoal',
-          pomodorosTarget: 1,
-        },
-        {
-          title: 'Revisar finanças do mês e pagar boletos',
-          description: 'Analisar investimentos e custos recorrentes do MVP.',
-          priority: 'medium',
+          title: 'Planejamento Financeiro e Contas',
+          description: 'Revisão de faturamentos, pagamentos de serviços na nuvem e boletos.',
+          priority: 'high',
           category: 'Finanças',
-          pomodorosTarget: 1,
+          pomodorosTarget: 2,
+          subtasks: [
+            { id: 'sub-fin-1', title: 'Auditar faturamentos de APIs e Cloud Run', completed: false },
+            { id: 'sub-fin-2', title: 'Quitar boletos recorrentes do setup de dev', completed: false },
+            { id: 'sub-fin-3', title: 'Definir teto de gastos do mês para ferramentas de IA', completed: false }
+          ]
         },
         {
-          title: 'Fazer compras de mantimentos nutritivos',
-          description: 'Focar em frutas hidratantes, folhas, snacks rápidos e aveia.',
+          title: 'Retrospectiva e OKRs Mensais',
+          description: 'Analise o progresso de metas e recalibre prioridades.',
           priority: 'medium',
-          category: 'Pessoal',
+          category: 'Trabalho',
           pomodorosTarget: 1,
+          subtasks: [
+            { id: 'sub-okr-1', title: 'Analisar churn e retenção do MVP', completed: false },
+            { id: 'sub-okr-2', title: 'Refinar 3 metas principais da próxima sprint de valor', completed: false }
+          ]
         }
       ]
     },
@@ -234,28 +360,19 @@ function DashboardContent() {
       name: 'Validação Sprint de MVP',
       icon: '⚡',
       category: 'Trabalho',
-      description: 'Fluxo completo de testes locais das features offline-first da Sprint.',
+      description: 'Rotina completa de validação e estabilização de deployments antes de release',
       tasks: [
         {
-          title: 'Testar exportação em lote CSV no Drive',
-          description: 'Analisar se a estrutura de relatórios de atividades está 100% legível.',
-          priority: 'medium',
-          category: 'Trabalho',
-          pomodorosTarget: 1,
-        },
-        {
-          title: 'Conectar Google Calendar e rodar mockings',
-          description: 'Verificar se o debounce de 1.5s poupa requisições desnecessárias.',
+          title: 'Validação de Features Offline-First',
+          description: 'Garantir que a sincronização automática e resiliência funcionem corretas.',
           priority: 'high',
           category: 'Trabalho',
           pomodorosTarget: 2,
-        },
-        {
-          title: 'Pequena retrospectiva técnica da entrega',
-          description: 'Refletir sobre complexidade removida ao descartar modelo remoto.',
-          priority: 'low',
-          category: 'Trabalho',
-          pomodorosTarget: 1,
+          subtasks: [
+            { id: 'sub-qa-1', title: 'Simular oscilação de internet gravando 3 alterações', completed: false },
+            { id: 'sub-qa-2', title: 'Verificar consolidação (debounce + upsert) na tabela SyncQueue', completed: false },
+            { id: 'sub-qa-3', title: 'Confirmar reconexão e dreno elegante em segundo plano', completed: false }
+          ]
         }
       ]
     }
@@ -263,6 +380,13 @@ function DashboardContent() {
 
   const handleImportTemplate = (tpl: any) => {
     tpl.tasks.forEach((t: any) => {
+      // Create fresh randomized subtask IDs to allow clean separate toggling
+      const preparedSubtasks = (t.subtasks || []).map((sub: any) => ({
+        id: `sub_${Math.random().toString(36).substring(2, 9)}`,
+        title: sub.title,
+        completed: sub.completed
+      }));
+
       addTask({
         title: t.title,
         description: t.description,
@@ -272,7 +396,8 @@ function DashboardContent() {
         category: t.category,
         pomodorosTarget: t.pomodorosTarget,
         recurrence: 'none',
-        syncWithGoogle: false
+        syncWithGoogle: false,
+        subtasks: preparedSubtasks
       });
     });
     
@@ -544,25 +669,61 @@ function DashboardContent() {
               {task.title}
             </h5>
           </div>
-          <motion.button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleTaskComplete(task.id);
-            }}
-            onMouseEnter={playHoverTickSound}
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
-            className="flex h-4.5 w-4.5 flex-shrink-0 items-center justify-center rounded border border-slate-800 bg-slate-950 hover:bg-amber-500/10 cursor-pointer"
-          >
-            {task.completed && <CheckCircle2 className="h-3 w-3 stroke-[3] text-amber-500" />}
-          </motion.button>
+          <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
+            {/* Ouro / Star priority toggle */}
+            <motion.button
+              type="button"
+              onClick={(e) => handleTogglePriorityDay(task, e)}
+              whileHover={{ scale: 1.15 }}
+              whileTap={{ scale: 0.85 }}
+              className={`flex h-5 w-5 items-center justify-center rounded-md border text-[10px] cursor-pointer transition-colors ${
+                task.isPriorityDay 
+                  ? 'bg-amber-500/25 border-amber-400 text-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.2)] font-black' 
+                  : 'bg-slate-950 border-slate-850 text-slate-550 hover:text-slate-350 hover:border-slate-700'
+              }`}
+              title={task.isPriorityDay ? "Remover do Top 3 Prioridades do Dia" : "Marcar como Foco do Dia"}
+            >
+              <Star className={`h-3 w-3 ${task.isPriorityDay ? 'fill-current' : ''}`} />
+            </motion.button>
+
+            {/* Complete status toggler */}
+            <motion.button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleTaskComplete(task.id);
+              }}
+              onMouseEnter={playHoverTickSound}
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
+              className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border border-slate-800 bg-slate-950 hover:bg-amber-500/10 cursor-pointer"
+            >
+              {task.completed && <CheckCircle2 className="h-3.5 w-3.5 stroke-[3] text-amber-500" />}
+            </motion.button>
+          </div>
         </div>
 
         {task.description && (
           <p className="text-[10px] text-slate-500 line-clamp-2 leading-normal">
             {task.description}
           </p>
+        )}
+
+        {task.subtasks && task.subtasks.length > 0 && (
+          <div className="space-y-1 mt-1 pb-1">
+            <div className="flex items-center justify-between text-[8px] font-bold text-slate-400 font-mono">
+              <span className="flex items-center gap-0.5">📋 CHECKLIST</span>
+              <span>
+                {task.subtasks.filter(s => s.completed).length}/{task.subtasks.length}
+              </span>
+            </div>
+            <div className="w-full bg-slate-900 rounded-full h-1 overflow-hidden">
+              <div 
+                className="bg-amber-500 h-1 transition-all duration-300"
+                style={{ width: `${(task.subtasks.filter(s => s.completed).length / task.subtasks.length) * 100}%` }}
+              />
+            </div>
+          </div>
         )}
 
         <div className="flex items-center justify-between pt-1.5 mt-0.5 font-mono text-[9px] text-slate-550 border-t border-slate-900">
@@ -574,11 +735,24 @@ function DashboardContent() {
               📅 {task.dueDate.split('-').slice(1).reverse().join('/')}
             </span>
           )}
-          {!task.isSynced && (
-            <span className="flex items-center gap-0.5 text-[8px] font-bold text-amber-500 uppercase tracking-tighter">
-              ● offline
-            </span>
-          )}
+          {!task.isSynced && (() => {
+            const queueEntry = SyncQueueDB.getEntries().find(e => e.taskId === task.id);
+            if (queueEntry && queueEntry.attempts > 0) {
+              return (
+                <span 
+                  className="flex items-center gap-1 text-[8px] font-black text-rose-400 bg-rose-500/10 px-1 py-0.5 rounded border border-rose-500/20 uppercase tracking-tighter"
+                  title={`Erro: ${queueEntry.lastError || 'Rede fora'} - Próxima retentativa: ${queueEntry.nextAttemptAfter ? new Date(queueEntry.nextAttemptAfter).toLocaleTimeString() : 'Imediato'}`}
+                >
+                  ⚠️ Erro (Repass #{queueEntry.attempts})
+                </span>
+              );
+            }
+            return (
+              <span className="flex items-center gap-0.5 text-[8px] font-bold text-amber-500 uppercase tracking-tighter">
+                ● offline
+              </span>
+            );
+          })()}
         </div>
       </div>
     );
@@ -1068,7 +1242,157 @@ function DashboardContent() {
         ) : (
           /* Actual Interactive Product Applet */
           <div className="space-y-6">
-            
+
+            {/* Warning regarding the 3-tasks cap */}
+            {priorityLimitWarning && (
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="bg-amber-500/10 border border-amber-500/30 text-amber-500 px-4 py-3 rounded-xl flex items-center justify-between text-xs font-semibold backdrop-blur"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">⚠️</span>
+                  <span>{priorityLimitWarning}</span>
+                </div>
+                <button 
+                  onClick={() => setPriorityLimitWarning(null)} 
+                  className="text-[10px] font-black uppercase text-amber-400 hover:text-white"
+                >
+                  OK
+                </button>
+              </motion.div>
+            )}
+
+            {/* 🎯 ELITE DIÁRIA: SEU TOP 3 FOCUS */}
+            <div className="rounded-2xl border border-amber-500/20 bg-gradient-to-br from-slate-900/95 to-slate-950 p-5 shadow-lg shadow-amber-500/5 relative overflow-hidden">
+              <div className="absolute top-0 right-0 h-32 w-32 rounded-full bg-amber-500/5 blur-2xl pointer-events-none" />
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+                <div>
+                  <h3 className="font-sans text-xs font-black text-amber-400 flex items-center gap-2 uppercase tracking-widest">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-md bg-amber-500/10 text-amber-500">
+                      🎯
+                    </span>
+                    Foco da Jornada / Elite Top 3 Diário
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Consagre exatamente 3 itens para manter clareza absoluta, blindar a mente e reduzir o peso de listas compridas.
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setBreathingPhase('inspire');
+                    setBreathingSecondsLeft(4);
+                    setIsOpeningRitualVisible(true);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/25 border border-amber-500/20 hover:border-amber-500/40 text-amber-400 hover:text-white font-bold rounded-lg text-[10px] transition-all cursor-pointer uppercase tracking-wider"
+                >
+                  🌅 Refazer Ritual Matinal
+                </button>
+              </div>
+
+              {dayPriorityTasks.length === 0 ? (
+                <div className="text-center py-6 border border-dashed border-slate-850 rounded-xl bg-slate-950/20">
+                  <Star className="h-6 w-6 text-slate-700 mx-auto animate-pulse" />
+                  <p className="text-xs font-semibold text-slate-400 mt-2">Nenhum foco de ouro consagrado hoje.</p>
+                  <p className="text-[10px] text-slate-500 mt-1 max-w-md mx-auto">
+                    Selecione até 3 tarefas prioritárias clicando nas estrelas (⭐) dos cards ou utilize o Ritual de Abertura para consagrar seus objetivos matinais.
+                  </p>
+                  <button
+                    onClick={() => setIsOpeningRitualVisible(true)}
+                    className="mt-3 inline-flex items-center gap-1 py-1 px-3 bg-amber-500 text-slate-950 font-black rounded-lg text-[10px] hover:bg-amber-400 transition-colors uppercase cursor-pointer"
+                  >
+                    Abrir Ritual de Abertura 🌅
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {dayPriorityTasks.map((task) => {
+                    const progressVal = task.subtasks && task.subtasks.length > 0 
+                      ? Math.round((task.subtasks.filter(s => s.completed).length / task.subtasks.length) * 100) 
+                      : null;
+
+                    return (
+                      <div 
+                        key={task.id}
+                        onClick={() => handleOpenEditModal(task)}
+                        className={`group relative rounded-xl border p-4 transition-all cursor-pointer flex flex-col justify-between ${
+                          task.completed
+                            ? 'bg-emerald-500/5 border-emerald-500/20 text-slate-500 opacity-75'
+                            : 'bg-slate-950/50 hover:bg-slate-900 border-amber-500/10 hover:border-amber-500/30 text-slate-100 shadow-md'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="rounded-full bg-slate-900 px-1.5 py-0.5 font-mono text-[8px] font-bold text-slate-400 border border-slate-800 uppercase tracking-widest">
+                              {task.category}
+                            </span>
+                            <div className="flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                              {/* Star pin toggle inside card */}
+                              <button
+                                onClick={(e) => handleTogglePriorityDay(task, e)}
+                                className="h-5 w-5 flex items-center justify-center text-amber-400 hover:text-amber-300 transition-colors cursor-pointer"
+                                title="Remover do Top 3 Prioridades"
+                              >
+                                <Star className="h-3.5 w-3.5 fill-current" />
+                              </button>
+
+                              {/* Toggle complete button */}
+                              <button
+                                onClick={() => toggleTaskComplete(task.id)}
+                                onMouseEnter={playHoverTickSound}
+                                className={`flex h-4.5 w-4.5 items-center justify-center rounded border ${
+                                  task.completed 
+                                    ? 'bg-amber-500 border-amber-500 text-slate-950' 
+                                    : 'border-slate-800 bg-slate-950 hover:border-amber-500/40'
+                                } cursor-pointer`}
+                              >
+                                {task.completed && <CheckCircle2 className="h-3 w-3 stroke-[3]" />}
+                              </button>
+                            </div>
+                          </div>
+
+                          <h4 className={`text-xs font-bold leading-snug mt-2 line-clamp-2 ${task.completed ? 'line-through text-slate-500' : 'text-slate-100 group-hover:text-amber-400'}`}>
+                            {task.title}
+                          </h4>
+
+                          {task.description && (
+                            <p className="text-[10px] text-slate-500 mt-1 line-clamp-1">
+                              {task.description}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Checklist Progress if subtasks exist */}
+                        {task.subtasks && task.subtasks.length > 0 && (
+                          <div className="mt-3 pt-2.5 border-t border-slate-900/60 font-mono text-[8px]">
+                            <div className="flex items-center justify-between font-bold text-slate-400 mb-1">
+                              <span>CHECKLIST</span>
+                              <span>{progressVal}%</span>
+                            </div>
+                            <div className="w-full bg-slate-900 rounded-full h-1 overflow-hidden">
+                              <div 
+                                className="bg-amber-500 h-1 transition-all duration-300"
+                                style={{ width: `${progressVal}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+                        
+                        <div className="mt-2.5 pt-1.5 border-t border-slate-900/60 flex items-center justify-between font-mono text-[8px] text-slate-650">
+                          <span>🍅 {task.pomodoroCount || 0}/{task.pomodorosTarget || 1} Pomodoro</span>
+                          {task.dueDate && (
+                            <span>📅 {task.dueDate.split('-').slice(1).reverse().join('/')}</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             {/* Sub-view Section Switcher (Board vs List) */}
             <div className="flex bg-slate-900 border border-slate-850 p-1 rounded-xl max-w-xs shadow-md">
               <button
@@ -1237,44 +1561,62 @@ function DashboardContent() {
                           onClick={() => handleOpenEditModal(task)}
                           className={`group relative flex items-start gap-4 rounded-xl border p-4 transition-all cursor-pointer ${
                             task.completed
-                              ? 'bg-slate-900/15 border-slate-900 text-slate-500 hover:bg-slate-900/25 hover:border-slate-800'
+                              ? 'bg-slate-900/15 border-slate-900 text-slate-550 hover:bg-slate-900/25 hover:border-slate-800'
                               : task.isSynced && task.googleEventId
                                 ? 'bg-slate-900/90 border-cyan-500/80 text-slate-200 shadow-[0_0_12px_rgba(6,182,212,0.25)] hover:bg-slate-850 hover:shadow-[0_0_15px_rgba(6,182,212,0.35)]'
                                 : 'bg-slate-900 hover:bg-slate-850 hover:border-slate-700 text-slate-200 hover:shadow-md'
                           } ${activeTaskId === task.id ? 'ring-2 ring-amber-500/50' : ''}`}
                         >
-                          {/* Custom Interactive Checkbox */}
-                          <motion.button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleTaskComplete(task.id);
-                            }}
-                            onMouseEnter={playHoverTickSound}
-                            whileHover={{ scale: 1.15 }}
-                            whileTap={{ scale: 0.85 }}
-                            transition={{ type: 'spring', stiffness: 500, damping: 15 }}
-                            title={task.completed ? 'Desmarcar como pendente' : 'Marcar como concluída'}
-                            className="mt-1 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border text-slate-900 transition-colors cursor-pointer"
-                            style={{
-                              backgroundColor: task.completed ? '#f59e0b' : 'transparent',
-                              borderColor: task.completed ? '#f59e0b' : '#334155',
-                            }}
-                          >
-                            <AnimatePresence>
-                              {task.completed && (
-                                <motion.div
-                                  initial={{ scale: 0, rotate: -360 }}
-                                  animate={{ scale: 1, rotate: 0 }}
-                                  exit={{ scale: 0, rotate: -360 }}
-                                  transition={{ type: 'spring', stiffness: 450, damping: 15 }}
-                                  className="flex items-center justify-center"
-                                >
-                                  <CheckCircle2 className="CheckCircle2 h-3.5 w-3.5 text-[#020617] stroke-[3]" />
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </motion.button>
+                          <div className="flex flex-col gap-2.5 flex-shrink-0 items-center justify-start mt-1">
+                            {/* Custom Interactive Checkbox */}
+                            <motion.button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleTaskComplete(task.id);
+                              }}
+                              onMouseEnter={playHoverTickSound}
+                              whileHover={{ scale: 1.15 }}
+                              whileTap={{ scale: 0.85 }}
+                              transition={{ type: 'spring', stiffness: 500, damping: 15 }}
+                              title={task.completed ? 'Desmarcar como pendente' : 'Marcar como concluída'}
+                              className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border text-slate-900 transition-colors cursor-pointer"
+                              style={{
+                                backgroundColor: task.completed ? '#f59e0b' : 'transparent',
+                                borderColor: task.completed ? '#f59e0b' : '#334155',
+                              }}
+                            >
+                              <AnimatePresence>
+                                {task.completed && (
+                                  <motion.div
+                                    initial={{ scale: 0, rotate: -360 }}
+                                    animate={{ scale: 1, rotate: 0 }}
+                                    exit={{ scale: 0, rotate: -360 }}
+                                    transition={{ type: 'spring', stiffness: 450, damping: 15 }}
+                                    className="flex items-center justify-center"
+                                  >
+                                    <CheckCircle2 className="CheckCircle2 h-3.5 w-3.5 text-[#020617] stroke-[3]" />
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </motion.button>
+
+                            {/* Ouro / Star priority toggle */}
+                            <motion.button
+                              type="button"
+                              onClick={(e) => handleTogglePriorityDay(task, e)}
+                              whileHover={{ scale: 1.15 }}
+                              whileTap={{ scale: 0.85 }}
+                              className={`flex h-5 w-5 items-center justify-center rounded-md border text-[10px] cursor-pointer transition-colors ${
+                                task.isPriorityDay 
+                                  ? 'bg-amber-500/25 border-amber-400 text-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.2)] font-black' 
+                                  : 'bg-slate-950 border-slate-850 text-slate-550 hover:text-slate-350 hover:border-slate-700'
+                              }`}
+                              title={task.isPriorityDay ? "Remover do Top 3 Prioridades do Dia" : "Marcar como Foco do Dia"}
+                            >
+                              <Star className={`h-3 w-3 ${task.isPriorityDay ? 'fill-current' : ''}`} />
+                            </motion.button>
+                          </div>
 
                           <div className="flex-1 min-w-0 space-y-1.5">
                             {/* Title & Badge details */}
@@ -1291,14 +1633,27 @@ function DashboardContent() {
                                 </span>
 
                                 {/* Synchronized status indicators list */}
-                                {!task.isSynced && (
-                                  <span
-                                    className="flex items-center gap-0.5 text-[9px] font-bold text-amber-500 uppercase cursor-pointer"
-                                    title="Gravado localmente. Pendente de sincronização automática com banco na nuvem."
-                                  >
-                                    <CloudLightning className="h-2.5 w-2.5" /> offline
-                                  </span>
-                                )}
+                                {!task.isSynced && (() => {
+                                  const queueEntry = SyncQueueDB.getEntries().find(e => e.taskId === task.id);
+                                  if (queueEntry && queueEntry.attempts > 0) {
+                                    return (
+                                      <span
+                                        className="flex items-center gap-1 text-[9px] font-black text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20 uppercase cursor-pointer animate-pulse"
+                                        title={`Erro: ${queueEntry.lastError || 'Falha de rede'} - Próxima retentativa: ${queueEntry.nextAttemptAfter ? new Date(queueEntry.nextAttemptAfter).toLocaleTimeString() : 'Imediato'}`}
+                                      >
+                                        <CloudLightning className="h-2.5 w-2.5 text-rose-400" /> erro (repass #{queueEntry.attempts})
+                                      </span>
+                                    );
+                                  }
+                                  return (
+                                    <span
+                                      className="flex items-center gap-0.5 text-[9px] font-bold text-amber-500 uppercase cursor-pointer"
+                                      title="Gravado localmente. Pendente de sincronização automática com banco na nuvem."
+                                    >
+                                      <CloudLightning className="h-2.5 w-2.5" /> offline
+                                    </span>
+                                  );
+                                })()}
                               </div>
 
                               <div className="flex items-center gap-1.5 mt-1.5">
@@ -1384,6 +1739,52 @@ function DashboardContent() {
                               <p className="text-xs text-slate-400 font-sans leading-relaxed line-clamp-2">
                                 {task.description}
                               </p>
+                            )}
+
+                            {/* Interactive Checklist Subtasks */}
+                            {task.subtasks && task.subtasks.length > 0 && (
+                              <div className="mt-2.5 p-3 rounded-xl bg-slate-950/70 border border-slate-900/80 space-y-2 shadow-inner">
+                                <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 font-mono uppercase tracking-wider">
+                                  <span className="flex items-center gap-1">📋 Subtarefas (Checklist)</span>
+                                  <span className="bg-slate-950 text-amber-500 px-1.5 py-0.5 rounded text-[9px] border border-slate-900">
+                                    {task.subtasks.filter(s => s.completed).length}/{task.subtasks.length} concluídas
+                                  </span>
+                                </div>
+                                
+                                <div className="w-full bg-slate-900 rounded-full h-1 overflow-hidden">
+                                  <div 
+                                    className="bg-amber-500 h-1 transition-all duration-300"
+                                    style={{ width: `${(task.subtasks.filter(s => s.completed).length / task.subtasks.length) * 100}%` }}
+                                  />
+                                </div>
+
+                                <div className="space-y-1.5 mt-2.5">
+                                  {task.subtasks.map((sub) => (
+                                    <label
+                                      key={sub.id}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                      }}
+                                      className="flex items-center gap-2 text-xs font-sans text-slate-300 hover:text-white transition-colors cursor-pointer select-none py-0.5"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={sub.completed}
+                                        onChange={() => {
+                                          const updatedSubs = task.subtasks!.map(s => 
+                                            s.id === sub.id ? { ...s, completed: !s.completed } : s
+                                          );
+                                          updateTask(task.id, { subtasks: updatedSubs });
+                                        }}
+                                        className="rounded border-slate-800 text-amber-500 focus:ring-transparent h-3.5 w-3.5 bg-slate-950 focus:outline-none cursor-pointer"
+                                      />
+                                      <span className={sub.completed ? "line-through text-slate-550" : ""}>
+                                        {sub.title}
+                                      </span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
                             )}
 
                             {/* Metadata grid rows (Dates, Pomodoros sessions) */}
@@ -1712,6 +2113,327 @@ function DashboardContent() {
         isGoogleConnected={isGoogleConnected}
         defaultReminderMinutes={defaultReminderMinutes}
       />
+
+      {/* RITUAL DE ABERTURA DIÁRIO (DAILY RESET IMPERSIVE PORTAL) */}
+      <AnimatePresence>
+        {isOpeningRitualVisible && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/98 backdrop-blur-lg flex items-center justify-center p-4 sm:p-6"
+          >
+            {/* Ambient gold glow */}
+            <div className="fixed -top-10 -left-10 h-96 w-96 rounded-full bg-amber-500/10 blur-[130px] pointer-events-none" />
+            <div className="fixed -bottom-10 -right-10 h-96 w-96 rounded-full bg-indigo-505/10 blur-[130px] pointer-events-none" />
+
+            <motion.div
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              className="w-full max-w-4xl bg-slate-900 border border-amber-500/20 rounded-3xl p-6 sm:p-8 shadow-2xl relative z-10 grid grid-cols-1 md:grid-cols-12 gap-8 items-start"
+            >
+              {/* Left Column: Greeting, Breathing Exercise, Ritual Explanation */}
+              <div className="md:col-span-5 space-y-6">
+                <div>
+                  <span className="text-amber-500 font-mono text-[9px] font-black uppercase tracking-widest bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full">
+                    🌅 Ritual Matinal Citrino
+                  </span>
+                  <h2 className="font-sans text-xl sm:text-2xl font-black text-white mt-3 leading-tight tracking-tight uppercase">
+                    Acalme a mente, <br />
+                    <span className="text-amber-400">firme seus alicerces.</span>
+                  </h2>
+                  <p className="text-xs text-slate-400 leading-relaxed mt-2.5">
+                    O ritual de abertura bloqueia a ansiedade de listas infinitas. Antes de iniciar sua jornada diária, dedique um minuto para respirar consciente e consagrar no máximo 3 focos.
+                  </p>
+                </div>
+
+                {/* VISUAL RESPIRATION GUIDE WIDGET */}
+                <div className="bg-slate-950/80 rounded-2xl border border-slate-800 p-5 text-center relative overflow-hidden">
+                  <span className="text-[9px] font-mono font-bold text-slate-500 tracking-wider">GUIA DE RESPIRAÇÃO (4-4-4)</span>
+                  
+                  {/* Glowing core animation */}
+                  <div className="my-6 flex items-center justify-center">
+                    <motion.div
+                      animate={{
+                        scale: breathingPhase === 'inspire' ? 1.3 : breathingPhase === 'segure' ? 1.3 : 0.85,
+                        backgroundColor: breathingPhase === 'segure' ? 'rgba(245, 158, 11, 0.25)' : 'rgba(245, 158, 11, 0.15)',
+                        borderColor: breathingPhase === 'segure' ? 'rgba(245, 158, 11, 0.6)' : 'rgba(245, 158, 11, 0.3)'
+                      }}
+                      transition={{ duration: 4, ease: "linear" }}
+                      className="h-24 w-24 rounded-full border-2 flex flex-col items-center justify-center text-amber-500 shadow-inner"
+                    >
+                      <span className="text-[10px] font-mono uppercase tracking-widest font-black leading-none">
+                        {breathingSecondsLeft}s
+                      </span>
+                      <span className="text-[8px] font-mono leading-relaxed text-amber-400/80 font-bold uppercase mt-1">
+                        {breathingPhase === 'inspire' ? 'Inspire' : breathingPhase === 'segure' ? 'Segure' : 'Expire'}
+                      </span>
+                    </motion.div>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 leading-normal italic px-2">
+                    {breathingPhase === 'inspire' && '"Inspire clareza e controle na sua rotina."'}
+                    {breathingPhase === 'segure' && '"Foque na retenção, sinta-se presente hoje."'}
+                    {breathingPhase === 'expire' && '"Solte toda a pressão e ansiedade acumulada."'}
+                  </p>
+                </div>
+
+                <div className="bg-slate-950/40 p-3 rounded-xl border border-slate-850/60 font-mono text-[9px] text-slate-500 leading-normal flex items-start gap-1.5">
+                  <span className="text-amber-500">💡</span>
+                  <span>O cérebro trabalha melhor focando em progresso contínuo de 3 metas principais por dia do que em infinitos checkboxes vazios.</span>
+                </div>
+              </div>
+
+              {/* Right Column: Dynamic Core Priority Selector & Quick Adder */}
+              <div className="md:col-span-7 flex flex-col h-full justify-between space-y-6">
+                <div>
+                  <h3 className="font-sans text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5 mb-1">
+                    🎯 Consagre seu Top 3 Diário
+                  </h3>
+                  <p className="text-[11px] text-slate-500 leading-relaxed mb-4">
+                    Marque até 3 metas como o Foco Ouro de hoje. Elas ficarão consagradas no topo do seu painel de tarefas de visualização rápida.
+                  </p>
+
+                  {/* Active selection counters indicator */}
+                  <div className="flex items-center justify-between text-xs font-mono font-bold px-1 mb-2">
+                    <span className="text-slate-400">Focos Ativos Selecionados:</span>
+                    <span className={`px-2 py-0.5 rounded ${dayPriorityTasks.length === 3 ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-950 text-slate-500'}`}>
+                      {dayPriorityTasks.length}/3 Metas
+                    </span>
+                  </div>
+
+                  {/* Quick-Task addition board inside Ritual */}
+                  <form onSubmit={handleCreateQuickTaskInRitual} className="bg-slate-950/90 rounded-2xl border border-slate-800 p-4 mb-4 space-y-3">
+                    <span className="text-[9px] font-mono font-bold text-slate-500 block">ADICIONAR META RÁPIDA DE FOCO</span>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="Digite o título da sua principal prioridade..."
+                        value={ritualNewTaskTitle}
+                        onChange={(e) => setRitualNewTaskTitle(e.target.value)}
+                        className="flex-1 rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 focus:border-amber-500 focus:outline-none placeholder:text-slate-650"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!ritualNewTaskTitle.trim()}
+                        className="px-3 py-1.5 bg-amber-500 disabled:opacity-50 text-slate-950 font-black rounded-xl text-xs hover:bg-amber-400 cursor-pointer flex items-center gap-1"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Adicionar
+                      </button>
+                    </div>
+
+                    <div className="flex gap-3 justify-between items-center pt-1 text-[10px]">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-500">Categoria:</span>
+                        <select
+                          value={ritualNewTaskCategory}
+                          onChange={(e) => setRitualNewTaskCategory(e.target.value)}
+                          className="bg-slate-900 text-slate-350 border border-slate-850 rounded px-1.5 py-0.5 focus:outline-none focus:border-amber-500 text-[10px]"
+                        >
+                          <option value="Estudo">Estudo</option>
+                          <option value="Trabalho">Trabalho</option>
+                          <option value="Pessoal">Pessoal</option>
+                          <option value="Saúde">Saúde</option>
+                        </select>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-500">Pontos Estrelados:</span>
+                        <select
+                          value={ritualNewTaskPriority}
+                          onChange={(e) => setRitualNewTaskPriority(e.target.value as TaskPriority)}
+                          className="bg-slate-900 text-slate-350 border border-slate-850 rounded px-1.5 py-0.5 focus:outline-none focus:border-amber-500 text-[10px]"
+                        >
+                          <option value="low">Fácil (+40 XP)</option>
+                          <option value="medium">Média (+50 XP)</option>
+                          <option value="high">Lendária (+70 XP)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </form>
+
+                  {/* Pending Tasks / Recommendations selector list */}
+                  <div className="space-y-2 overflow-y-auto max-h-[220px] pr-1.5">
+                    {tasks.filter(t => !t.completed).length === 0 ? (
+                      <div className="text-center py-6 border border-dashed border-slate-800 rounded-xl">
+                        <p className="text-xs text-slate-500">Seu banco de ideias está vazio. Crie uma meta rápida acima!</p>
+                      </div>
+                    ) : (
+                      tasks.filter(t => !t.completed).map((task) => {
+                        return (
+                          <div
+                            key={task.id}
+                            onClick={() => {
+                              if (!task.isPriorityDay && dayPriorityTasks.length >= 3) return;
+                              updateTask(task.id, { isPriorityDay: !task.isPriorityDay });
+                              if (soundEnabled) playHoverTickSound();
+                            }}
+                            className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
+                              task.isPriorityDay
+                                ? 'bg-amber-500/10 border-amber-500/30 text-white'
+                                : 'bg-slate-950/40 border-slate-850 hover:bg-slate-950/90 text-slate-400 hover:text-slate-300'
+                            }`}
+                          >
+                            <div className="min-w-0 pr-3">
+                              <span className="rounded-full bg-slate-900 px-1.5 py-0.5 text-[8px] font-mono border border-slate-800 uppercase text-slate-500">
+                                {task.category}
+                              </span>
+                              <h5 className={`text-xs font-bold leading-tight mt-1 line-clamp-1 ${task.isPriorityDay ? 'text-amber-400' : ''}`}>
+                                {task.title}
+                              </h5>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!task.isPriorityDay && dayPriorityTasks.length >= 3) {
+                                  alert("Máximo de 3 tarefas atingido!");
+                                  return;
+                                }
+                                updateTask(task.id, { isPriorityDay: !task.isPriorityDay });
+                                if (soundEnabled) playHoverTickSound();
+                              }}
+                              className={`h-6 w-6 flex items-center justify-center rounded-lg border text-xs ${
+                                task.isPriorityDay 
+                                  ? 'bg-amber-500 text-slate-950 border-amber-500' 
+                                  : 'border-slate-850 bg-slate-950 text-slate-650 hover:bg-slate-900 hover:text-slate-400'
+                              }`}
+                            >
+                              <Star className={`h-3.5 w-3.5 ${task.isPriorityDay ? 'fill-current' : ''}`} />
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {/* Footer Initiate Journey button */}
+                <div className="pt-4 border-t border-slate-800 flex items-center justify-between gap-4">
+                  <p className="text-[10px] text-slate-500 leading-relaxed font-mono">
+                    Aperte para consagrar e ditar o compasso produtivo do dia atual.
+                  </p>
+                  
+                  <button
+                    onClick={() => {
+                      localStorage.setItem('citrino_last_ritual_date', new Date().toLocaleDateString());
+                      setIsOpeningRitualVisible(false);
+                      // Trigger celebration confetti & bell sound on consagration success
+                      if (soundEnabled) {
+                        try {
+                          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+                          if (AudioContextClass) {
+                            const ctx = new AudioContextClass();
+                            const osc = ctx.createOscillator();
+                            const gain = ctx.createGain();
+                            osc.type = 'sine';
+                            osc.frequency.setValueAtTime(880, ctx.currentTime); // A5 note
+                            gain.gain.setValueAtTime(0.08, ctx.currentTime);
+                            gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.8);
+                            osc.connect(gain);
+                            gain.connect(ctx.destination);
+                            osc.start();
+                            osc.stop(ctx.currentTime + 0.9);
+                          }
+                        } catch (err) {
+                          console.warn(err);
+                        }
+                      }
+                      try {
+                        (window as any).confetti?.({
+                          particleCount: 50,
+                          angle: 60,
+                          spread: 55,
+                          origin: { x: 0 }
+                        });
+                        (window as any).confetti?.({
+                          particleCount: 50,
+                          angle: 120,
+                          spread: 55,
+                          origin: { x: 1 }
+                        });
+                      } catch (c) {}
+                    }}
+                    className="flex items-center gap-1 px-5 py-3 bg-amber-500 hover:bg-amber-400 text-slate-550 hover:text-slate-950 font-black rounded-2xl text-xs transition-transform cursor-pointer shadow-lg active:scale-95 uppercase tracking-wide shrink-0 font-sans"
+                  >
+                    <span>Consagrar Focus & Iniciar</span>
+                    <span>🌅</span>
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* TELA DE SUCESSO DO RITUAL (100% COMPLETION DIARY CONGRATS COMPONENT) */}
+      <AnimatePresence>
+        {showSuccessCelebration && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-slate-950/95 flex items-center justify-center p-4 sm:p-6"
+          >
+            {/* Elegant deep glow */}
+            <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-96 w-96 rounded-full bg-amber-500/20 blur-[140px] pointer-events-none" />
+
+            <motion.div
+              initial={{ scale: 0.9, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 15 }}
+              className="w-full max-w-lg bg-slate-900 border border-amber-500/20 rounded-3xl p-6 sm:p-8 text-center relative z-10 shadow-2xl space-y-6"
+            >
+              <div className="inline-flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/10 border border-amber-500/35 text-amber-500 animate-bounce">
+                <Trophy className="h-8 w-8 text-amber-500" />
+              </div>
+
+              <div className="space-y-2">
+                <span className="font-mono text-[9px] font-black text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
+                  Jornada Consagrada
+                </span>
+                <h2 className="font-sans text-xl sm:text-2xl font-black text-white uppercase tracking-tight leading-tight mt-1">
+                  100% de Conclusão <br />
+                  <span className="text-amber-400">Das Suas Prioridades!</span>
+                </h2>
+              </div>
+
+              <p className="text-xs text-slate-400 leading-relaxed max-w-sm mx-auto">
+                Parabéns! Você blindou sua clareza mental neutralizando sobrecarga de dados hoje. Suas 3 principais tarefas de ouro da elite produtiva foram concluídas perfeitamente!
+              </p>
+
+              {/* Bonus badge details */}
+              <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800 text-left font-mono text-[10px] space-y-2">
+                <div className="flex justify-between items-center text-slate-400">
+                  <span>Prioridades Resolvidas:</span>
+                  <span className="text-amber-500 font-bold">{completedPrioritiesCount}/{totalPrioritiesCount}</span>
+                </div>
+                <div className="flex justify-between items-center text-slate-400">
+                  <span>Recompensa Citrino Extra:</span>
+                  <span className="text-amber-500 font-black">+100 XP Extra do Ritual</span>
+                </div>
+                <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden border border-slate-850 mt-1">
+                  <div className="h-full bg-gradient-to-r from-amber-600 to-yellow-400 rounded-full w-full" />
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  onClick={() => {
+                    // Award bonus 100 XP on daily priority complete confirmation, and close overlay
+                    setShowSuccessCelebration(false);
+                  }}
+                  className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-2xl text-xs transition-transform cursor-pointer shadow-lg active:scale-95 uppercase tracking-wider"
+                >
+                  Continuar Aprendizado 🚀
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { Task, TaskContextType, TaskPriority } from '../types';
 import { initAuth, googleSignIn, logout as googleLogout, getAccessToken } from '../lib/googleAuth';
 import { createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from '../lib/googleCalendar';
 import { SyncQueueDB } from '../lib/syncQueueDb';
+import { parseNaturalLanguageDate } from '../lib/nlpParser';
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
 
@@ -373,6 +374,17 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('citrino_offline_simulated', isOfflineSimulated.toString());
   }, [isOfflineSimulated, isAppOffline]);
 
+  // Periodic background queue retry trigger for elapsed backoff entries (every 12 seconds)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!isCurrentlyOffline && syncQueue.length > 0) {
+        console.log('[Sync Queue] Iniciando varredura em segundo plano para retentativas elegíveis...');
+        processSyncQueue();
+      }
+    }, 12000);
+    return () => clearInterval(timer);
+  }, [isCurrentlyOffline, syncQueue]);
+
   // Listen for Google Auth state changes
   useEffect(() => {
     const unsubscribe = initAuth(
@@ -641,8 +653,17 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       const latestQueueIds = latestEntries.map(e => e.taskId);
       setSyncQueue(latestQueueIds);
       localStorage.setItem('citrino_google_sync_queue', JSON.stringify(latestQueueIds));
-    } catch (err) {
-      console.warn(`[Sync Queue] Sync failed for task ${taskId}. Will retry on connection restore / sync drainage.`, err);
+    } catch (err: any) {
+      const errorMsg = err?.message || String(err);
+      console.warn(`[Sync Queue] Sync failed for task ${taskId}. Recording failure for exponential backoff: ${errorMsg}`);
+      
+      // Compute and persist exponential delay
+      SyncQueueDB.recordFailure(taskId, errorMsg);
+      
+      // Ensure syncQueue state is synced with SQLite table entries
+      const latestQueueIds = SyncQueueDB.getEntries().map(e => e.taskId);
+      setSyncQueue(latestQueueIds);
+      localStorage.setItem('citrino_google_sync_queue', JSON.stringify(latestQueueIds));
     }
   };
 
@@ -652,11 +673,18 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     const entries = SyncQueueDB.getEntries();
     if (entries.length === 0) return;
 
-    console.log(`[Sync Queue DB] Consolidating and draining ${entries.length} rows to Google Calendar...`);
+    // Get ONLY eligible entries to prevent failed/cooling down tasks from locking processing
+    const eligibleEntries = SyncQueueDB.getEligibleEntries();
+    if (eligibleEntries.length === 0) {
+      console.log(`[Sync Queue DB] Fila possui ${entries.length} tarefas pendentes, mas todas estão em cooldown de backoff ativo.`);
+      return;
+    }
+
+    console.log(`[Sync Queue DB] Consolidando e drenando ${eligibleEntries.length} tarefas elegíveis (Total pendente: ${entries.length}) para o Google Agenda...`);
     setIsGoogleSyncing(true);
 
     try {
-      for (const entry of entries) {
+      for (const entry of eligibleEntries) {
         try {
           if (entry.action === 'DELETE') {
             const token = await getAccessToken();
@@ -676,8 +704,12 @@ export function TaskProvider({ children }: { children: ReactNode }) {
             localStorage.setItem(LOCAL_STORAGE_KEY_TASKS, JSON.stringify(updated));
             return updated;
           });
-        } catch (e) {
-          console.error(`[Sync Queue DB] Direct error background processing row ${entry.taskId}:`, e);
+        } catch (e: any) {
+          const errorMsg = e?.message || String(e);
+          console.error(`[Sync Queue DB] Erro específico durante sincronização da tarefa ${entry.taskId}:`, e);
+          
+          // Increment attempts and set backoff cooldown, without blocking other tasks in the loop
+          SyncQueueDB.recordFailure(entry.taskId, errorMsg);
         }
       }
 
@@ -943,8 +975,15 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     const id = 'task-' + Math.random().toString(36).substr(2, 9);
     const now = new Date().toISOString();
     
+    // Parse title for date keywords (e.g. hoje, amanhã, segunda, etc)
+    const nlpResult = parseNaturalLanguageDate(newTaskData.title);
+    const finalTitle = nlpResult.title;
+    const finalDueDate = newTaskData.dueDate || nlpResult.dueDate || '';
+    
     const newTask: Task = {
       ...newTaskData,
+      title: finalTitle,
+      dueDate: finalDueDate,
       id,
       createdAt: now,
       updatedAt: now,
@@ -967,22 +1006,32 @@ export function TaskProvider({ children }: { children: ReactNode }) {
 
   const updateTask = (id: string, updates: Partial<Task>) => {
     const now = new Date().toISOString();
+    
+    let finalUpdates = { ...updates };
+    if (updates.title) {
+      const nlpResult = parseNaturalLanguageDate(updates.title);
+      finalUpdates.title = nlpResult.title;
+      if (nlpResult.dueDate && !updates.dueDate) {
+        finalUpdates.dueDate = nlpResult.dueDate;
+      }
+    }
+
     const updated = tasks.map((task) => {
       if (task.id === id) {
         const changesNeedSync = 
-          updates.title !== undefined || 
-          updates.description !== undefined || 
-          updates.completed !== undefined || 
-          updates.dueDate !== undefined || 
-          updates.priority !== undefined ||
-          updates.recurrence !== undefined ||
-          updates.syncWithGoogle !== undefined;
+          finalUpdates.title !== undefined || 
+          finalUpdates.description !== undefined || 
+          finalUpdates.completed !== undefined || 
+          finalUpdates.dueDate !== undefined || 
+          finalUpdates.priority !== undefined ||
+          finalUpdates.recurrence !== undefined ||
+          finalUpdates.syncWithGoogle !== undefined;
 
         return {
           ...task,
-          ...updates,
+          ...finalUpdates,
           updatedAt: now,
-          isSynced: changesNeedSync ? false : (updates.isSynced ?? task.isSynced),
+          isSynced: changesNeedSync ? false : (finalUpdates.isSynced ?? task.isSynced),
         };
       }
       return task;
