@@ -14,6 +14,9 @@ export interface Task {
   isSynced: boolean; // For tracking sync with cloud
   pomodoroCount: number; // Completed Pomodoro sessions
   pomodorosTarget: number; // Planned Pomodoro sessions
+  recurrence?: 'none' | 'daily' | 'weekly' | 'biweekly' | 'monthly';
+  googleEventId?: string;
+  syncWithGoogle?: boolean;
 }
 
 export interface TaskState {
@@ -41,6 +44,16 @@ export interface TaskContextType extends TaskState {
   addPomodoroSession: (id: string) => void;
   resetXP: () => void;
   setSoundEnabled: (enabled: boolean) => void;
+  playFocusSound: () => void;
   toggleTheme: () => void;
   clearCompletedTasks: () => void;
+
+  // Google Calendar Integration states & methods
+  googleUser: any;
+  isGoogleConnected: boolean;
+  isGoogleSyncing: boolean;
+  connectGoogle: () => Promise<void>;
+  disconnectGoogle: () => Promise<void>;
+  syncAllTasksToGoogle: () => Promise<void>;
+  syncTaskToGoogle: (taskId: string) => Promise<void>;
 }

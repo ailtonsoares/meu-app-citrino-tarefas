@@ -14,13 +14,16 @@ interface TaskModalProps {
     priority: TaskPriority;
     category: string;
     pomodorosTarget: number;
+    recurrence: 'none' | 'daily' | 'weekly' | 'biweekly' | 'monthly';
+    syncWithGoogle: boolean;
   }) => void;
   taskToEdit?: Task | null;
+  isGoogleConnected?: boolean;
 }
 
 const CATEGORIES = ['Estudo', 'Trabalho', 'Pessoal', 'Saúde', 'Finanças', 'Outros'];
 
-export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit }: TaskModalProps) {
+export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit, isGoogleConnected = false }: TaskModalProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
@@ -28,6 +31,8 @@ export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit }: Tas
   const [priority, setPriority] = useState<TaskPriority>('medium');
   const [category, setCategory] = useState('Estudo');
   const [pomodorosTarget, setPomodorosTarget] = useState(1);
+  const [recurrence, setRecurrence] = useState<'none' | 'daily' | 'weekly' | 'biweekly' | 'monthly'>('none');
+  const [syncWithGoogle, setSyncWithGoogle] = useState(true);
   const [errors, setErrors] = useState<{ title?: string }>({});
 
   useEffect(() => {
@@ -39,6 +44,8 @@ export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit }: Tas
       setPriority(taskToEdit.priority);
       setCategory(taskToEdit.category || 'Estudo');
       setPomodorosTarget(taskToEdit.pomodorosTarget || 1);
+      setRecurrence(taskToEdit.recurrence || 'none');
+      setSyncWithGoogle(taskToEdit.syncWithGoogle ?? isGoogleConnected);
     } else {
       // Reset to defaults
       setTitle('');
@@ -49,9 +56,11 @@ export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit }: Tas
       setPriority('medium');
       setCategory('Estudo');
       setPomodorosTarget(1);
+      setRecurrence('none');
+      setSyncWithGoogle(isGoogleConnected);
     }
     setErrors({});
-  }, [taskToEdit, isOpen]);
+  }, [taskToEdit, isOpen, isGoogleConnected]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,6 +76,8 @@ export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit }: Tas
       priority,
       category,
       pomodorosTarget,
+      recurrence,
+      syncWithGoogle,
     });
     onClose();
   };
@@ -270,6 +281,67 @@ export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit }: Tas
                     +
                   </button>
                 </div>
+              </div>
+
+              {/* Recurrence Pattern Select */}
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Recorrência (Frequência Citrino)</label>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {[
+                    { value: 'none', label: 'Nenhuma' },
+                    { value: 'daily', label: 'Diária' },
+                    { value: 'weekly', label: 'Semanal' },
+                    { value: 'biweekly', label: 'Quinzenal' },
+                    { value: 'monthly', label: 'Mensal' }
+                  ].map((item) => {
+                    const isSelected = recurrence === item.value;
+                    return (
+                      <button
+                        key={item.value}
+                        type="button"
+                        onClick={() => {
+                          setRecurrence(item.value as any);
+                          if (item.value !== 'none') {
+                            setSyncWithGoogle(true);
+                          }
+                        }}
+                        className={`rounded-xl border py-2.5 text-center cursor-pointer transition-all ${
+                          isSelected
+                            ? 'bg-amber-500/15 border-amber-500 text-amber-500 font-semibold shadow-[0_0_12px_rgba(245,158,11,0.08)]'
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                        }`}
+                      >
+                        <span className="font-sans text-[11px] block">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Sync check toggle */}
+              <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/40 p-3.5">
+                <div className="space-y-0.5 pr-2">
+                  <h4 className="flex items-center gap-1.5 font-sans text-sm font-semibold text-slate-250">
+                    <Calendar className="h-4 w-4 text-amber-500" /> Sincronizar com Google Agenda
+                  </h4>
+                  <p className="text-xs text-slate-500">
+                    {isGoogleConnected 
+                      ? 'Espelhar automaticamente esta tarefa na sua conta do Google' 
+                      : 'Conecte seu Google Agenda na tela inicial para habilitar'}
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={syncWithGoogle}
+                    disabled={!isGoogleConnected}
+                    onChange={(e) => setSyncWithGoogle(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className={`w-11 h-6 bg-slate-800 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-slate-350 after:border-gray-350 after:border after:rounded-full after:h-5 after:w-5 after:transition-all ${
+                    isGoogleConnected ? 'peer-checked:bg-amber-500 cursor-pointer' : 'opacity-40 cursor-not-allowed'
+                  }`}></div>
+                </label>
               </div>
 
               {/* Submit / Action buttons */}

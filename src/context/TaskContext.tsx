@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import confetti from 'canvas-confetti';
 import { Task, TaskContextType, TaskPriority } from '../types';
+import { initAuth, googleSignIn, logout as googleLogout, getAccessToken } from '../lib/googleAuth';
+import { createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from '../lib/googleCalendar';
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
 
@@ -114,6 +116,68 @@ const playPopSound = () => {
   }
 };
 
+const playReverseClickSound = () => {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    
+    const ctx = new AudioContextClass();
+    const now = ctx.currentTime;
+    
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    
+    osc.type = 'sine';
+    // Downward pitch progression for reverse effect (representing unchecking)
+    osc.frequency.setValueAtTime(450, now);
+    osc.frequency.exponentialRampToValueAtTime(120, now + 0.08);
+    
+    // Smooth fast attack and slightly softer release
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.12, now + 0.025);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.1);
+    
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    osc.start(now);
+    osc.stop(now + 0.12);
+  } catch (err) {
+    console.warn('Audio synthesis of reverse click failed:', err);
+  }
+};
+
+const playFocusSoundInternal = () => {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    
+    const ctx = new AudioContextClass();
+    const now = ctx.currentTime;
+    
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    
+    osc.type = 'sine';
+    // 'soft tick' profile: high frequency (e.g. 1600Hz) decaying extremely fast
+    osc.frequency.setValueAtTime(1600, now);
+    osc.frequency.exponentialRampToValueAtTime(1000, now + 0.04);
+    
+    // Fast attack and extremely fast decay (40ms total) with soft amplitude (0.06)
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.06, now + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.04);
+    
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    osc.start(now);
+    osc.stop(now + 0.05);
+  } catch (err) {
+    console.warn('Audio synthesis of focus tick failed:', err);
+  }
+};
+
 const playLevelUpSound = () => {
   try {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -219,6 +283,28 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [soundEnabled, setSoundEnabledState] = useState<boolean>(true);
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
+
+  // Google Calendar Integration States
+  const [googleUser, setGoogleUser] = useState<any>(null);
+  const [isGoogleConnected, setIsGoogleConnected] = useState<boolean>(false);
+  const [isGoogleSyncing, setIsGoogleSyncing] = useState<boolean>(false);
+
+  // Listen for Google Auth state changes
+  useEffect(() => {
+    const unsubscribe = initAuth(
+      (user) => {
+        setGoogleUser(user);
+        setIsGoogleConnected(true);
+      },
+      () => {
+        setGoogleUser(null);
+        setIsGoogleConnected(false);
+      }
+    );
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
 
   // Side-effect to apply theme class on document element
   useEffect(() => {
@@ -353,6 +439,96 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   };
 
   // 3. CRUD operations
+  const syncTaskToGoogle = async (taskId: string, currentTasksList?: Task[]) => {
+    try {
+      const token = await getAccessToken();
+      if (!token) {
+        console.warn('Google Calendar status: Not connected / OAuth token unavailable');
+        return;
+      }
+
+      const list = currentTasksList || tasks;
+      const task = list.find(t => t.id === taskId);
+      if (!task) return;
+
+      if (!task.googleEventId) {
+        // Create a new calendar event
+        const eventId = await createCalendarEvent(task, token);
+        setTasks(prev => {
+          const updated = prev.map(t => t.id === taskId ? { ...t, googleEventId: eventId, isSynced: true } : t);
+          localStorage.setItem(LOCAL_STORAGE_KEY_TASKS, JSON.stringify(updated));
+          return updated;
+        });
+      } else {
+        // Update the existing calendar event
+        await updateCalendarEvent(task.googleEventId, task, token);
+        setTasks(prev => {
+          const updated = prev.map(t => t.id === taskId ? { ...t, isSynced: true } : t);
+          localStorage.setItem(LOCAL_STORAGE_KEY_TASKS, JSON.stringify(updated));
+          return updated;
+        });
+      }
+    } catch (err) {
+      console.error(`Error syncing task ${taskId} to Google Calendar:`, err);
+    }
+  };
+
+  const syncAllTasksToGoogle = async () => {
+    const token = await getAccessToken();
+    if (!token) return;
+
+    setIsGoogleSyncing(true);
+    try {
+      const updatedTasks = [...tasks];
+      for (const task of updatedTasks) {
+        if (task.syncWithGoogle || task.googleEventId) {
+          try {
+            if (!task.googleEventId) {
+              const eventId = await createCalendarEvent(task, token);
+              task.googleEventId = eventId;
+              task.isSynced = true;
+            } else {
+              await updateCalendarEvent(task.googleEventId, task, token);
+              task.isSynced = true;
+            }
+          } catch (e) {
+            console.error(`Error syncing task ${task.id} to Google Calendar:`, e);
+          }
+        }
+      }
+      saveTasksList(updatedTasks);
+    } catch (err) {
+      console.error('Error syncing all tasks to Google Calendar:', err);
+    } finally {
+      setIsGoogleSyncing(false);
+    }
+  };
+
+  const connectGoogle = async () => {
+    try {
+      setIsGoogleSyncing(true);
+      const result = await googleSignIn();
+      if (result) {
+        setGoogleUser(result.user);
+        setIsGoogleConnected(true);
+      }
+    } catch (err) {
+      console.error('Failed to connect with Google Calendar:', err);
+    } finally {
+      setIsGoogleSyncing(false);
+    }
+  };
+
+  const disconnectGoogle = async () => {
+    try {
+      await googleLogout();
+      setGoogleUser(null);
+      setIsGoogleConnected(false);
+    } catch (err) {
+      console.error('Failed to disconnect Google Calendar:', err);
+    }
+  };
+
   const addTask = (newTaskData: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'isSynced' | 'pomodoroCount'>) => {
     const id = 'task-' + Math.random().toString(36).substr(2, 9);
     const now = new Date().toISOString();
@@ -366,22 +542,31 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       pomodoroCount: 0,
     };
 
-    saveTasksList([newTask, ...tasks]);
+    const updatedTasks = [newTask, ...tasks];
+    saveTasksList(updatedTasks);
     // Award 15 XP for planning / creating a task
     awardXP(15);
+
+    // If marked to sync with Google Agenda, run sync in background
+    if (newTask.syncWithGoogle) {
+      setTimeout(() => {
+        syncTaskToGoogle(id, updatedTasks);
+      }, 100);
+    }
   };
 
   const updateTask = (id: string, updates: Partial<Task>) => {
     const now = new Date().toISOString();
     const updated = tasks.map((task) => {
       if (task.id === id) {
-        // If updating a critical field, flag as un-synced for offline tracking
         const changesNeedSync = 
           updates.title !== undefined || 
           updates.description !== undefined || 
           updates.completed !== undefined || 
           updates.dueDate !== undefined || 
-          updates.priority !== undefined;
+          updates.priority !== undefined ||
+          updates.recurrence !== undefined ||
+          updates.syncWithGoogle !== undefined;
 
         return {
           ...task,
@@ -393,6 +578,14 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       return task;
     });
     saveTasksList(updated);
+
+    // Call calendar update immediately if exists on Google or marked to sync
+    const targetTask = updated.find(t => t.id === id);
+    if (targetTask && (targetTask.syncWithGoogle || targetTask.googleEventId)) {
+      setTimeout(() => {
+        syncTaskToGoogle(id, updated);
+      }, 100);
+    }
   };
 
   const deleteTask = (id: string) => {
@@ -403,6 +596,17 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     // Deduct standard creation XP if deleted uncompleted key task
     if (taskToDelete && !taskToDelete.completed) {
       deductXP(10);
+    }
+
+    // Call delete calendar event if synced to google
+    if (taskToDelete && taskToDelete.googleEventId) {
+      getAccessToken().then(token => {
+        if (token) {
+          deleteCalendarEvent(taskToDelete.googleEventId!, token).catch(e => {
+            console.error('Error deleting event on calendar:', e);
+          });
+        }
+      });
     }
   };
 
@@ -438,6 +642,10 @@ export function TaskProvider({ children }: { children: ReactNode }) {
           if (task.priority === 'medium') baseXP = 50;
           awardXP(baseXP);
         } else {
+          // Play micro-interaction descending reverse click sound!
+          if (soundEnabled) {
+            playReverseClickSound();
+          }
           // Unchecked task - deduct previous XP
           let xpToDeduct = 40;
           if (task.priority === 'high') xpToDeduct = 70;
@@ -455,6 +663,14 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       return task;
     });
     saveTasksList(updated);
+
+    // Call calendar update immediately if exists on Google or marked to sync
+    const completedTask = updated.find(t => t.id === id);
+    if (completedTask && (completedTask.googleEventId || completedTask.syncWithGoogle)) {
+      setTimeout(() => {
+        syncTaskToGoogle(id, updated);
+      }, 100);
+    }
   };
 
   // 4. Pomodoro Focus integration
@@ -542,6 +758,12 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('citrino_sound_enabled', enabled.toString());
   };
 
+  const playFocusSound = () => {
+    if (soundEnabled) {
+      playFocusSoundInternal();
+    }
+  };
+
   const resetXP = () => {
     setXp(0);
     setLevel(1);
@@ -586,8 +808,18 @@ export function TaskProvider({ children }: { children: ReactNode }) {
         addPomodoroSession,
         resetXP,
         setSoundEnabled,
+        playFocusSound,
         toggleTheme,
         clearCompletedTasks,
+        
+        // Google Calendar integration
+        googleUser,
+        isGoogleConnected,
+        isGoogleSyncing,
+        connectGoogle,
+        disconnectGoogle,
+        syncAllTasksToGoogle,
+        syncTaskToGoogle,
       }}
     >
       {children}

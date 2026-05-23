@@ -61,8 +61,18 @@ function DashboardContent() {
     addPomodoroSession,
     resetXP,
     setSoundEnabled,
+    playFocusSound,
     toggleTheme,
-    clearCompletedTasks
+    clearCompletedTasks,
+
+    // Google integration
+    googleUser,
+    isGoogleConnected,
+    isGoogleSyncing,
+    connectGoogle,
+    disconnectGoogle,
+    syncAllTasksToGoogle,
+    syncTaskToGoogle,
   } = useTasks();
 
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
@@ -88,6 +98,8 @@ function DashboardContent() {
     priority: TaskPriority;
     category: string;
     pomodorosTarget: number;
+    recurrence: 'none' | 'daily' | 'weekly' | 'biweekly' | 'monthly';
+    syncWithGoogle: boolean;
   }) => {
     if (taskToEdit) {
       updateTask(taskToEdit.id, taskData);
@@ -588,14 +600,17 @@ function DashboardContent() {
                           } ${activeTaskId === task.id ? 'ring-2 ring-amber-500/50' : ''}`}
                         >
                           {/* Custom Interactive Checkbox */}
-                          <button
+                          <motion.button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleTaskComplete(task.id);
                             }}
+                            whileHover={{ scale: 1.15 }}
+                            whileTap={{ scale: 0.85 }}
+                            transition={{ type: 'spring', stiffness: 500, damping: 15 }}
                             title={task.completed ? 'Desmarcar como pendente' : 'Marcar como concluída'}
-                            className="mt-1 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border text-slate-900 transition-all cursor-pointer hover:scale-105 active:scale-95"
+                            className="mt-1 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border text-slate-900 transition-colors cursor-pointer"
                             style={{
                               backgroundColor: task.completed ? '#f59e0b' : 'transparent',
                               borderColor: task.completed ? '#f59e0b' : '#334155',
@@ -611,7 +626,7 @@ function DashboardContent() {
                                 <CheckCircle2 className="CheckCircle2 h-3.5 w-3.5 text-[#020617] stroke-[3]" />
                               </motion.div>
                             )}
-                          </button>
+                          </motion.button>
 
                           <div className="flex-1 min-w-0 space-y-1.5">
                             {/* Title & Badge details */}
@@ -676,6 +691,7 @@ function DashboardContent() {
                               <button
                                 onClick={() => {
                                   setActiveTaskId(task.id);
+                                  playFocusSound();
                                   // Scroll to focus widget if view on mobile
                                   document.getElementById('focus-card-section')?.scrollIntoView({ behavior: 'smooth' });
                                 }}
@@ -734,6 +750,76 @@ function DashboardContent() {
                 />
               </div>
 
+              {/* Google Agenda Integration card */}
+              <div className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-950 p-6 space-y-4 shadow-xl">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <h4 className="flex items-center gap-1.5 font-sans font-bold text-slate-100">
+                      <Calendar className="h-4 w-4 text-amber-500" /> Google Agenda
+                    </h4>
+                    <p className="text-[11px] text-slate-400">Sincronize suas metas citrinas</p>
+                  </div>
+                  
+                  {isGoogleConnected ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-500 uppercase tracking-wider">
+                      ● Conectado
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-500 uppercase tracking-wider">
+                      ○ Desconectado
+                    </span>
+                  )}
+                </div>
+
+                {isGoogleConnected ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3 rounded-xl bg-slate-950 border border-slate-900 p-2.5">
+                      {googleUser?.photoURL ? (
+                        <img referrerPolicy="no-referrer" src={googleUser.photoURL} alt="Foto de perfil" className="h-8 w-8 rounded-full border border-slate-850" />
+                      ) : (
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-500/10 text-xs font-bold text-amber-500">G</div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-semibold text-slate-200">{googleUser?.displayName || 'Usuário Google'}</p>
+                        <p className="truncate font-mono text-[10px] text-slate-500">{googleUser?.email || ''}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={syncAllTasksToGoogle}
+                        disabled={isGoogleSyncing}
+                        className="flex-1 rounded-xl bg-amber-500 px-3 py-2 text-center font-sans text-xs font-bold text-slate-950 hover:bg-amber-400 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        {isGoogleSyncing ? 'Sincronizando...' : 'Sincronizar Todas'}
+                      </button>
+                      
+                      <button
+                        onClick={disconnectGoogle}
+                        className="rounded-xl border border-slate-800 px-3 py-2 text-center font-sans text-xs font-medium text-slate-400 hover:text-rose-400 hover:border-rose-500/20 hover:bg-rose-500/5 transition-all cursor-pointer"
+                        title="Desconectar Integração"
+                      >
+                        Desconectar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Ative a sincronização para exportar automaticamente seus blocos de tarefas diárias, semanais, quinzenais ou mensais diretamente para a sua agenda em tempo real.
+                    </p>
+                    <button
+                      onClick={connectGoogle}
+                      disabled={isGoogleSyncing}
+                      className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 font-sans text-xs font-bold text-slate-200 hover:bg-slate-900 hover:border-slate-700 transition-all cursor-pointer shadow-md active:scale-[0.98]"
+                    >
+                      <img src="https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png" alt="Google" className="h-3" />
+                      {isGoogleSyncing ? 'Conectando...' : 'Conectar Google'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
               {/* Tips banner card */}
               <div className="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/80 to-slate-950 p-6">
                 <h4 className="flex items-center gap-1.5 font-sans font-bold text-slate-200">
@@ -765,6 +851,7 @@ function DashboardContent() {
         onClose={() => setIsModalOpen(false)}
         onSubmit={handleModalSubmit}
         taskToEdit={taskToEdit}
+        isGoogleConnected={isGoogleConnected}
       />
     </div>
   );
