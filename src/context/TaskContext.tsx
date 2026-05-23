@@ -1,8 +1,9 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { Task, TaskContextType, TaskPriority } from '../types';
 import { initAuth, googleSignIn, logout as googleLogout, getAccessToken } from '../lib/googleAuth';
 import { createCalendarEvent, updateCalendarEvent, deleteCalendarEvent } from '../lib/googleCalendar';
+import { SyncQueueDB } from '../lib/syncQueueDb';
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
 
@@ -178,6 +179,38 @@ const playFocusSoundInternal = () => {
   }
 };
 
+const playSearchSoundInternal = () => {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    
+    const ctx = new AudioContextClass();
+    const now = ctx.currentTime;
+    
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    
+    osc.type = 'sine';
+    // Gentle high pitch ping at 1320 Hz
+    osc.frequency.setValueAtTime(1320, now);
+    // Smooth subtle slide to 1200 Hz to sweeten the tone
+    osc.frequency.exponentialRampToValueAtTime(1200, now + 0.08);
+    
+    // Smooth but transient attack, very short decay for a clean ping
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.03, now + 0.004); // subtle volume
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+    
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    osc.start(now);
+    osc.stop(now + 0.1);
+  } catch (err) {
+    console.warn('Audio synthesis of search ping failed:', err);
+  }
+};
+
 const playLevelUpSound = () => {
   try {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -283,11 +316,62 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [soundEnabled, setSoundEnabledState] = useState<boolean>(true);
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
+  const [defaultReminderMinutes, setDefaultReminderMinutesState] = useState<number>(15);
 
   // Google Calendar Integration States
   const [googleUser, setGoogleUser] = useState<any>(null);
   const [isGoogleConnected, setIsGoogleConnected] = useState<boolean>(false);
   const [isGoogleSyncing, setIsGoogleSyncing] = useState<boolean>(false);
+  const [isGoogleDriveOperating, setIsGoogleDriveOperating] = useState<boolean>(false);
+
+  // Offline Sync and Simulation states
+  const [isOfflineSimulated, setIsOfflineSimulated] = useState<boolean>(false);
+  const [isAppOffline, setIsAppOffline] = useState<boolean>(false);
+  const [syncQueue, setSyncQueue] = useState<string[]>([]);
+  const debounceTimers = useRef<{ [taskId: string]: any }>({});
+
+  const isCurrentlyOffline = isAppOffline || isOfflineSimulated;
+
+  // Sync Queue Local Persistence and Network Listeners
+  useEffect(() => {
+    const savedQueue = localStorage.getItem('citrino_google_sync_queue');
+    if (savedQueue) {
+      try {
+        setSyncQueue(JSON.parse(savedQueue));
+      } catch (e) {
+        console.error('Failed to parse sync queue', e);
+      }
+    }
+
+    const savedOfflineSim = localStorage.getItem('citrino_offline_simulated');
+    if (savedOfflineSim !== null) {
+      setIsOfflineSimulated(savedOfflineSim === 'true');
+    }
+
+    const handleOnline = () => {
+      setIsAppOffline(false);
+    };
+    const handleOffline = () => {
+      setIsAppOffline(true);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    setIsAppOffline(!navigator.onLine);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Sync queue auto-drain effect when online status changes
+  useEffect(() => {
+    if (!isCurrentlyOffline && syncQueue.length > 0) {
+      processSyncQueue();
+    }
+    localStorage.setItem('citrino_offline_simulated', isOfflineSimulated.toString());
+  }, [isOfflineSimulated, isAppOffline]);
 
   // Listen for Google Auth state changes
   useEffect(() => {
@@ -367,6 +451,8 @@ export function TaskProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      let storedDefaultReminder = localStorage.getItem('citrino_default_reminder_minutes');
+
       if (storedTasks) {
         setTasks(JSON.parse(storedTasks));
       } else {
@@ -387,6 +473,9 @@ export function TaskProvider({ children }: { children: ReactNode }) {
 
       if (storedTheme === 'light' || storedTheme === 'dark') {
         setTheme(storedTheme);
+      }
+      if (storedDefaultReminder !== null) {
+        setDefaultReminderMinutesState(parseInt(storedDefaultReminder, 10));
       }
     } catch (err) {
       console.error('Error loading tasks from localStorage:', err);
@@ -439,7 +528,8 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   };
 
   // 3. CRUD operations
-  const syncTaskToGoogle = async (taskId: string, currentTasksList?: Task[]) => {
+  // Direct Google Calendar Sync (hashing original logic)
+  const syncTaskToGoogleDirect = async (taskId: string, currentTasksList?: Task[]) => {
     try {
       const token = await getAccessToken();
       if (!token) {
@@ -447,9 +537,16 @@ export function TaskProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      // Read fresh list
       const list = currentTasksList || tasks;
-      const task = list.find(t => t.id === taskId);
+      const FreshTasks = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY_TASKS) || '[]');
+      const task = FreshTasks.find((t: Task) => t.id === taskId) || list.find((t: Task) => t.id === taskId);
       if (!task) return;
+
+      // Only attempt actual Google sync if the user explicitly has Google syncing toggled or has a google event already
+      if (!task.syncWithGoogle && !task.googleEventId) {
+        return;
+      }
 
       if (!task.googleEventId) {
         // Create a new calendar event
@@ -469,8 +566,133 @@ export function TaskProvider({ children }: { children: ReactNode }) {
         });
       }
     } catch (err) {
-      console.error(`Error syncing task ${taskId} to Google Calendar:`, err);
+      console.error(`Error in direct sync of task ${taskId} to Google Calendar:`, err);
+      throw err; // propagates to queue re-adder
     }
+  };
+
+  // Queued Sync with local debounce and emulated SQLite Table Consolidation
+  const queueTaskSync = (taskId: string, currentTasksList?: Task[], action: 'INSERT' | 'UPDATE' | 'DELETE' = 'UPDATE') => {
+    // Clear existing timer if any for this task to achieve debounce!
+    if (debounceTimers.current[taskId]) {
+      clearTimeout(debounceTimers.current[taskId]);
+    }
+
+    const list = currentTasksList || tasks;
+    const task = list.find((t: Task) => t.id === taskId) || { id: taskId, title: 'Tarefa Removida', completed: true, priority: 'low' as TaskPriority, category: 'Geral', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), isSynced: false, pomodoroCount: 0, pomodorosTarget: 1 } as Task;
+
+    // Persist into sqlite/hive-simulated database table with upsert/collapsing consolidation rules
+    SyncQueueDB.upsert(taskId, action, task);
+
+    // Sync React SyncQueue state keys directly with SQLite table primary/foreign keys
+    const entries = SyncQueueDB.getEntries();
+    const queueIds = entries.map(e => e.taskId);
+    setSyncQueue(queueIds);
+    localStorage.setItem('citrino_google_sync_queue', JSON.stringify(queueIds));
+
+    // Mark task locally as NOT synced in the main task list to give visual feedback (yellow/orange sync badge)
+    if (action !== 'DELETE') {
+      setTasks(prev => {
+        const updated = prev.map(t => t.id === taskId ? { ...t, isSynced: false } : t);
+        localStorage.setItem(LOCAL_STORAGE_KEY_TASKS, JSON.stringify(updated));
+        return updated;
+      });
+    }
+
+    // Set debounce timer (1500ms delay)
+    debounceTimers.current[taskId] = setTimeout(() => {
+      processTaskFromQueue(taskId);
+    }, 1500);
+  };
+
+  const processTaskFromQueue = async (taskId: string) => {
+    if (isCurrentlyOffline) {
+      console.log(`[Sync Queue] Simulated offline. Row for task ${taskId} remains safely in simulated SQLite database.`);
+      return;
+    }
+
+    const entries = SyncQueueDB.getEntries();
+    const entry = entries.find(e => e.taskId === taskId);
+    if (!entry) return;
+
+    try {
+      if (entry.action === 'DELETE') {
+        const token = await getAccessToken();
+        if (token && entry.payload.googleEventId) {
+          await deleteCalendarEvent(entry.payload.googleEventId, token);
+        }
+      } else {
+        // Run final consolidated API upsert logic
+        await syncTaskToGoogleDirect(taskId);
+      }
+      
+      // On successful background transaction, delete rows from our SQLite table
+      SyncQueueDB.remove(taskId);
+
+      // Mark the active task in state as successfully synchronized and true!
+      setTasks(prev => {
+        const updated = prev.map(t => t.id === taskId ? { ...t, isSynced: true } : t);
+        localStorage.setItem(LOCAL_STORAGE_KEY_TASKS, JSON.stringify(updated));
+        return updated;
+      });
+
+      // Update React state queue list
+      const latestEntries = SyncQueueDB.getEntries();
+      const latestQueueIds = latestEntries.map(e => e.taskId);
+      setSyncQueue(latestQueueIds);
+      localStorage.setItem('citrino_google_sync_queue', JSON.stringify(latestQueueIds));
+    } catch (err) {
+      console.warn(`[Sync Queue] Sync failed for task ${taskId}. Will retry on connection restore / sync drainage.`, err);
+    }
+  };
+
+  const processSyncQueue = async () => {
+    if (isCurrentlyOffline) return;
+
+    const entries = SyncQueueDB.getEntries();
+    if (entries.length === 0) return;
+
+    console.log(`[Sync Queue DB] Consolidating and draining ${entries.length} rows to Google Calendar...`);
+    setIsGoogleSyncing(true);
+
+    try {
+      for (const entry of entries) {
+        try {
+          if (entry.action === 'DELETE') {
+            const token = await getAccessToken();
+            if (token && entry.payload.googleEventId) {
+              await deleteCalendarEvent(entry.payload.googleEventId, token);
+            }
+          } else {
+            await syncTaskToGoogleDirect(entry.taskId);
+          }
+          
+          // Transaction complete, remove this row
+          SyncQueueDB.remove(entry.taskId);
+          
+          // Mark as synchronized in general task state
+          setTasks(prev => {
+            const updated = prev.map(t => t.id === entry.taskId ? { ...t, isSynced: true } : t);
+            localStorage.setItem(LOCAL_STORAGE_KEY_TASKS, JSON.stringify(updated));
+            return updated;
+          });
+        } catch (e) {
+          console.error(`[Sync Queue DB] Direct error background processing row ${entry.taskId}:`, e);
+        }
+      }
+
+      // Re-evaluate Sync Queue state
+      const finalized = SyncQueueDB.getEntries().map(e => e.taskId);
+      setSyncQueue(finalized);
+      localStorage.setItem('citrino_google_sync_queue', JSON.stringify(finalized));
+    } finally {
+      setIsGoogleSyncing(false);
+    }
+  };
+
+  // Sync wrapper that triggers queuing under-the-hood with action type
+  const syncTaskToGoogle = async (taskId: string, currentTasksList?: Task[], action: 'INSERT' | 'UPDATE' | 'DELETE' = 'UPDATE') => {
+    queueTaskSync(taskId, currentTasksList, action);
   };
 
   const syncAllTasksToGoogle = async () => {
@@ -529,6 +751,194 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const backupToGoogleDrive = async (): Promise<{ success: boolean; message: string }> => {
+    setIsGoogleDriveOperating(true);
+    try {
+      const token = await getAccessToken();
+      if (!token) {
+        throw new Error('Conta Google não conectada ou sessão expirada. Por favor, conecte-se novamente.');
+      }
+
+      const backupData = {
+        tasks,
+        xp,
+        level,
+        soundEnabled,
+        theme,
+        backupDate: new Date().toISOString(),
+        version: '1.0'
+      };
+      const backupContent = JSON.stringify(backupData, null, 2);
+
+      const query = encodeURIComponent("name = 'citrino_tasks_backup.json' and trashed = false");
+      const resQuery = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name,createdTime)`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const dataQuery = await resQuery.json();
+      const existingFiles = dataQuery.files || [];
+
+      if (existingFiles.length > 0) {
+        const fileId = existingFiles[0].id;
+        const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: backupContent
+        });
+        if (!uploadRes.ok) {
+          throw new Error('Falha ao atualizar o arquivo de backup existente no Google Drive.');
+        }
+      } else {
+        const metaRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: 'citrino_tasks_backup.json',
+            mimeType: 'application/json'
+          })
+        });
+        if (!metaRes.ok) {
+          throw new Error('Falha ao criar o arquivo de backup no Google Drive.');
+        }
+        const fileMetadata = await metaRes.json();
+        const fileId = fileMetadata.id;
+
+        const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: backupContent
+        });
+        if (!uploadRes.ok) {
+          throw new Error('Falha ao fazer upload dos dados de backup para o Google Drive.');
+        }
+      }
+
+      return { success: true, message: 'Backup concluído com sucesso no seu Google Drive!' };
+    } catch (err: any) {
+      console.error('Error backing up to Google Drive:', err);
+      return { success: false, message: err.message || 'Ocorreu um erro ao realizar o backup.' };
+    } finally {
+      setIsGoogleDriveOperating(false);
+    }
+  };
+
+  const restoreFromGoogleDrive = async (): Promise<{ success: boolean; message: string }> => {
+    setIsGoogleDriveOperating(true);
+    try {
+      const token = await getAccessToken();
+      if (!token) {
+        throw new Error('Conta Google não conectada ou sessão expirada. Por favor, conecte-se novamente.');
+      }
+
+      const query = encodeURIComponent("name = 'citrino_tasks_backup.json' and trashed = false");
+      const resQuery = await fetch(`https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name,createdTime)`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const dataQuery = await resQuery.json();
+      const existingFiles = dataQuery.files || [];
+
+      if (existingFiles.length === 0) {
+        throw new Error('Nenhum arquivo de backup "citrino_tasks_backup.json" foi encontrado no seu Google Drive.');
+      }
+
+      const fileId = existingFiles[0].id;
+      const contentRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!contentRes.ok) {
+        throw new Error('Falha ao ler o arquivo de backup do Google Drive.');
+      }
+
+      const backupData = await contentRes.json();
+      
+      if (backupData.tasks && Array.isArray(backupData.tasks)) {
+        setTasks(backupData.tasks);
+        localStorage.setItem(LOCAL_STORAGE_KEY_TASKS, JSON.stringify(backupData.tasks));
+      }
+      if (backupData.xp !== undefined && typeof backupData.xp === 'number') {
+        setXp(backupData.xp);
+        localStorage.setItem(LOCAL_STORAGE_KEY_XP, backupData.xp.toString());
+      }
+      if (backupData.level !== undefined && typeof backupData.level === 'number') {
+        setLevel(backupData.level);
+        localStorage.setItem(LOCAL_STORAGE_KEY_LEVEL, backupData.level.toString());
+      }
+      if (backupData.theme === 'light' || backupData.theme === 'dark') {
+        setTheme(backupData.theme);
+        localStorage.setItem('citrino_theme', backupData.theme);
+      }
+      if (backupData.soundEnabled !== undefined && typeof backupData.soundEnabled === 'boolean') {
+        setSoundEnabledState(backupData.soundEnabled);
+        localStorage.setItem('citrino_sound_enabled', backupData.soundEnabled.toString());
+      }
+
+      return { success: true, message: 'Dados restaurados com sucesso do seu Google Drive!' };
+    } catch (err: any) {
+      console.error('Error restoring from Google Drive:', err);
+      return { success: false, message: err.message || 'Ocorreu um erro ao restaurar o backup.' };
+    } finally {
+      setIsGoogleDriveOperating(false);
+    }
+  };
+
+  const exportCSVToGoogleDrive = async (csvContent: string): Promise<{ success: boolean; message: string }> => {
+    setIsGoogleDriveOperating(true);
+    try {
+      const token = await getAccessToken();
+      if (!token) {
+        throw new Error('Conta Google não conectada ou sessão expirada. Por favor, conecte-se novamente.');
+      }
+
+      const dateStr = new Date().toISOString().split('T')[0];
+      const filename = `citrino_tarefas_concluidas_${dateStr}.csv`;
+
+      const metaRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: filename,
+          mimeType: 'text/csv'
+        })
+      });
+      if (!metaRes.ok) {
+        throw new Error('Falha ao criar o arquivo CSV no Google Drive.');
+      }
+      const fileMetadata = await metaRes.json();
+      const fileId = fileMetadata.id;
+
+      const bomContent = "\ufeff" + csvContent;
+      const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'text/csv;charset=utf-8;'
+        },
+        body: bomContent
+      });
+      if (!uploadRes.ok) {
+        throw new Error('Falha ao enviar o arquivo CSV para o Google Drive.');
+      }
+
+      return { success: true, message: `Histórico CSV exportado com sucesso para o seu Google Drive com o arquivo "${filename}"!` };
+    } catch (err: any) {
+      console.error('Error exporting CSV to Google Drive:', err);
+      return { success: false, message: err.message || 'Ocorreu um erro ao exportar o CSV.' };
+    } finally {
+      setIsGoogleDriveOperating(false);
+    }
+  };
+
   const addTask = (newTaskData: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'isSynced' | 'pomodoroCount'>) => {
     const id = 'task-' + Math.random().toString(36).substr(2, 9);
     const now = new Date().toISOString();
@@ -550,7 +960,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     // If marked to sync with Google Agenda, run sync in background
     if (newTask.syncWithGoogle) {
       setTimeout(() => {
-        syncTaskToGoogle(id, updatedTasks);
+        syncTaskToGoogle(id, updatedTasks, 'INSERT');
       }, 100);
     }
   };
@@ -583,7 +993,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     const targetTask = updated.find(t => t.id === id);
     if (targetTask && (targetTask.syncWithGoogle || targetTask.googleEventId)) {
       setTimeout(() => {
-        syncTaskToGoogle(id, updated);
+        syncTaskToGoogle(id, updated, 'UPDATE');
       }, 100);
     }
   };
@@ -600,13 +1010,20 @@ export function TaskProvider({ children }: { children: ReactNode }) {
 
     // Call delete calendar event if synced to google
     if (taskToDelete && taskToDelete.googleEventId) {
-      getAccessToken().then(token => {
-        if (token) {
-          deleteCalendarEvent(taskToDelete.googleEventId!, token).catch(e => {
-            console.error('Error deleting event on calendar:', e);
-          });
-        }
-      });
+      if (isCurrentlyOffline) {
+        syncTaskToGoogle(id, [taskToDelete], 'DELETE');
+      } else {
+        getAccessToken().then(token => {
+          if (token) {
+            deleteCalendarEvent(taskToDelete.googleEventId!, token).catch(e => {
+              console.error('Error deleting event on calendar, fallback queuing as delete:', e);
+              syncTaskToGoogle(id, [taskToDelete], 'DELETE');
+            });
+          } else {
+            syncTaskToGoogle(id, [taskToDelete], 'DELETE');
+          }
+        });
+      }
     }
   };
 
@@ -758,9 +1175,20 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('citrino_sound_enabled', enabled.toString());
   };
 
+  const setDefaultReminderMinutes = (minutes: number) => {
+    setDefaultReminderMinutesState(minutes);
+    localStorage.setItem('citrino_default_reminder_minutes', minutes.toString());
+  };
+
   const playFocusSound = () => {
     if (soundEnabled) {
       playFocusSoundInternal();
+    }
+  };
+
+  const playSearchSound = () => {
+    if (soundEnabled) {
+      playSearchSoundInternal();
     }
   };
 
@@ -797,6 +1225,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
         searchQuery,
         soundEnabled,
         theme,
+        defaultReminderMinutes,
         addTask,
         updateTask,
         deleteTask,
@@ -808,7 +1237,9 @@ export function TaskProvider({ children }: { children: ReactNode }) {
         addPomodoroSession,
         resetXP,
         setSoundEnabled,
+        setDefaultReminderMinutes,
         playFocusSound,
+        playSearchSound,
         toggleTheme,
         clearCompletedTasks,
         
@@ -820,6 +1251,18 @@ export function TaskProvider({ children }: { children: ReactNode }) {
         disconnectGoogle,
         syncAllTasksToGoogle,
         syncTaskToGoogle,
+
+        // Offline & simulation sync queue helpers
+        isOfflineSimulated,
+        setIsOfflineSimulated,
+        syncQueue,
+        processSyncQueue,
+
+        // Google Drive integration
+        isGoogleDriveOperating,
+        backupToGoogleDrive,
+        restoreFromGoogleDrive,
+        exportCSVToGoogleDrive,
       }}
     >
       {children}

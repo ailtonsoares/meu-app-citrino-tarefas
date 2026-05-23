@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { TaskProvider, useTasks } from './context/TaskContext';
 import { Task, TaskPriority } from './types';
@@ -35,7 +35,12 @@ import {
   Volume2,
   VolumeX,
   Sun,
-  Moon
+  Moon,
+  Download,
+  HardDrive,
+  CloudUpload,
+  CloudDownload,
+  Bell
 } from 'lucide-react';
 
 function DashboardContent() {
@@ -50,6 +55,8 @@ function DashboardContent() {
     searchQuery,
     soundEnabled,
     theme,
+    defaultReminderMinutes,
+    setDefaultReminderMinutes,
     addTask,
     updateTask,
     deleteTask,
@@ -62,6 +69,7 @@ function DashboardContent() {
     resetXP,
     setSoundEnabled,
     playFocusSound,
+    playSearchSound,
     toggleTheme,
     clearCompletedTasks,
 
@@ -73,12 +81,245 @@ function DashboardContent() {
     disconnectGoogle,
     syncAllTasksToGoogle,
     syncTaskToGoogle,
+
+    // Offline & simulation sync queue helpers
+    isOfflineSimulated,
+    setIsOfflineSimulated,
+    syncQueue,
+    processSyncQueue,
+
+    // Google Drive integration
+    isGoogleDriveOperating,
+    backupToGoogleDrive,
+    restoreFromGoogleDrive,
+    exportCSVToGoogleDrive,
   } = useTasks();
 
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [taskToEdit, setTaskToEdit] = useState<Task | null>(null);
   const [viewMode, setViewMode] = useState<'app' | 'specs'>('app'); // Switch between working web app & tech spec
+  const [driveStatus, setDriveStatus] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const [activeReminderPopoverTaskId, setActiveReminderPopoverTaskId] = useState<string | null>(null);
+  const [subView, setSubView] = useState<'board' | 'list'>('board');
+
+  const isCurrentlyOffline = !navigator.onLine || isOfflineSimulated;
+
+  // HTML5 Drag and Drop event handlers
+  const handleDragStart = (e: React.DragEvent, taskId: string) => {
+    e.dataTransfer.setData('text/plain', taskId);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDropOnDay = (e: React.DragEvent, dateStr: string) => {
+    e.preventDefault();
+    const taskId = e.dataTransfer.getData('text/plain');
+    if (taskId) {
+      updateTask(taskId, { dueDate: dateStr });
+      if (soundEnabled) {
+        playFocusSound();
+      }
+    }
+  };
+
+  const handleDropOnInbox = (e: React.DragEvent) => {
+    e.preventDefault();
+    const taskId = e.dataTransfer.getData('text/plain');
+    if (taskId) {
+      updateTask(taskId, { dueDate: '' }); // Clear due date to deposit in Ideas Box
+      if (soundEnabled) {
+        playFocusSound();
+      }
+    }
+  };
+
+  // 7 Days Weekly Planner calculator
+  const getWeekDays = () => {
+    const days = [];
+    const today = new Date();
+    
+    // Calculate Monday of the current week
+    const monday = new Date(today);
+    const dayOfWeek = today.getDay();
+    const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    monday.setDate(today.getDate() + diff);
+
+    const daysOfWeek = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+    const fullDaysOfWeek = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'];
+
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      const dateStr = d.toISOString().split('T')[0];
+      const isToday = d.toDateString() === today.toDateString();
+      days.push({
+        name: daysOfWeek[i],
+        fullName: fullDaysOfWeek[i],
+        dateStr,
+        isToday,
+        dayOfMonth: d.getDate()
+      });
+    }
+    return days;
+  };
+
+  // Static Task Templates for zero-cost enxuto MVP workflow
+  const TASK_TEMPLATES = [
+    {
+      id: 'tpl-estudo',
+      name: 'Rotina de Estudos de Dev',
+      icon: '🚀',
+      category: 'Estudo',
+      description: 'Kit de estudos TypeScript Citrino (3 tarefas)',
+      tasks: [
+        {
+          title: 'Revisar tipos complexos de TypeScript & Generics',
+          description: 'Focalizar em utilitários de tipos, mapeamentos de tipos e heranças.',
+          priority: 'medium',
+          category: 'Estudo',
+          pomodorosTarget: 2,
+        },
+        {
+          title: 'Ajustar componente de drag and drop do Canva',
+          description: 'Estudar os hooks locais, o dragover e drop nativos.',
+          priority: 'high',
+          category: 'Estudo',
+          pomodorosTarget: 3,
+        },
+        {
+          title: 'Testar fila de sincronização offline e debounce',
+          description: 'Mudar a conexão para offline simulado e ver a fila carregar.',
+          priority: 'low',
+          category: 'Estudo',
+          pomodorosTarget: 1,
+        }
+      ]
+    },
+    {
+      id: 'tpl-casa',
+      name: 'Organização Doméstica',
+      icon: '🏠',
+      category: 'Pessoal',
+      description: 'Mantenha a mesa e setup limpos para foco em programação.',
+      tasks: [
+        {
+          title: 'Limpar e otimizar setup físico de trabalho',
+          description: 'Limpar poeira, calibrar monitor, arrumar fios e preparar água.',
+          priority: 'low',
+          category: 'Pessoal',
+          pomodorosTarget: 1,
+        },
+        {
+          title: 'Revisar finanças do mês e pagar boletos',
+          description: 'Analisar investimentos e custos recorrentes do MVP.',
+          priority: 'medium',
+          category: 'Finanças',
+          pomodorosTarget: 1,
+        },
+        {
+          title: 'Fazer compras de mantimentos nutritivos',
+          description: 'Focar em frutas hidratantes, folhas, snacks rápidos e aveia.',
+          priority: 'medium',
+          category: 'Pessoal',
+          pomodorosTarget: 1,
+        }
+      ]
+    },
+    {
+      id: 'tpl-sprint',
+      name: 'Validação Sprint de MVP',
+      icon: '⚡',
+      category: 'Trabalho',
+      description: 'Fluxo completo de testes locais das features offline-first da Sprint.',
+      tasks: [
+        {
+          title: 'Testar exportação em lote CSV no Drive',
+          description: 'Analisar se a estrutura de relatórios de atividades está 100% legível.',
+          priority: 'medium',
+          category: 'Trabalho',
+          pomodorosTarget: 1,
+        },
+        {
+          title: 'Conectar Google Calendar e rodar mockings',
+          description: 'Verificar se o debounce de 1.5s poupa requisições desnecessárias.',
+          priority: 'high',
+          category: 'Trabalho',
+          pomodorosTarget: 2,
+        },
+        {
+          title: 'Pequena retrospectiva técnica da entrega',
+          description: 'Refletir sobre complexidade removida ao descartar modelo remoto.',
+          priority: 'low',
+          category: 'Trabalho',
+          pomodorosTarget: 1,
+        }
+      ]
+    }
+  ];
+
+  const handleImportTemplate = (tpl: any) => {
+    tpl.tasks.forEach((t: any) => {
+      addTask({
+        title: t.title,
+        description: t.description,
+        dueDate: '', // Loaded automatically into Caixa de Entrada / Gaveta, as requested!
+        dueTime: '12:00',
+        priority: t.priority,
+        category: t.category,
+        pomodorosTarget: t.pomodorosTarget,
+        recurrence: 'none',
+        syncWithGoogle: false
+      });
+    });
+    
+    if (soundEnabled) {
+      playFocusSound();
+    }
+  };
+
+  useEffect(() => {
+    const handleGlobalClick = () => {
+      setActiveReminderPopoverTaskId(null);
+    };
+    window.addEventListener('click', handleGlobalClick);
+    return () => {
+      window.removeEventListener('click', handleGlobalClick);
+    };
+  }, []);
+
+  const playHoverTickSound = () => {
+    if (!soundEnabled) return;
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      
+      const ctx = new AudioContextClass();
+      const now = ctx.currentTime;
+      
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1900, now);
+      osc.frequency.exponentialRampToValueAtTime(1300, now + 0.015);
+      
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(0.025, now + 0.002);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.015);
+      
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      
+      osc.start(now);
+      osc.stop(now + 0.02);
+    } catch (err) {
+      // quiet fail
+    }
+  };
 
   const handleOpenCreateModal = () => {
     setTaskToEdit(null);
@@ -100,11 +341,112 @@ function DashboardContent() {
     pomodorosTarget: number;
     recurrence: 'none' | 'daily' | 'weekly' | 'biweekly' | 'monthly';
     syncWithGoogle: boolean;
+    reminderMinutes?: number;
   }) => {
     if (taskToEdit) {
       updateTask(taskToEdit.id, taskData);
     } else {
       addTask(taskData);
+    }
+  };
+
+  const generateCompletedTasksCSV = (): string => {
+    const completedTasks = tasks.filter(task => task.completed);
+    if (completedTasks.length === 0) return '';
+
+    const headers = [
+      'ID',
+      'Titulo',
+      'Descricao',
+      'Prioridade',
+      'Categoria',
+      'Data de Entrega',
+      'Hora de Entrega',
+      'Foco Pomodoros',
+      'Foco Planejado',
+      'Recorrencia',
+      'Criado Em',
+      'Atualizado Em'
+    ];
+
+    const rows = completedTasks.map(task => {
+      const escape = (val: string | undefined | number | boolean) => {
+        if (val === undefined || val === null) return '""';
+        const str = String(val).replace(/"/g, '""');
+        return `"${str}"`;
+      };
+
+      return [
+        escape(task.id),
+        escape(task.title),
+        escape(task.description || ''),
+        escape(task.priority),
+        escape(task.category),
+        escape(task.dueDate || ''),
+        escape(task.dueTime || ''),
+        escape(task.pomodoroCount),
+        escape(task.pomodorosTarget),
+        escape(task.recurrence || 'none'),
+        escape(task.createdAt),
+        escape(task.updatedAt)
+      ].join(',');
+    });
+
+    return [headers.join(','), ...rows].join('\n');
+  };
+
+  const exportCompletedTasksToCSV = () => {
+    const csvContent = generateCompletedTasksCSV();
+    if (!csvContent) return;
+
+    const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'citrino_tarefas_concluidas.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleBackupDrive = async () => {
+    setDriveStatus({ type: 'info', message: 'Salvando backup de Citrino no Google Drive...' });
+    const res = await backupToGoogleDrive();
+    if (res.success) {
+      setDriveStatus({ type: 'success', message: res.message });
+    } else {
+      setDriveStatus({ type: 'error', message: res.message });
+    }
+  };
+
+  const handleRestoreDrive = async () => {
+    const confirmRestore = window.confirm(
+      'Atenção: Restaurar o backup substituirá todas as suas tarefas locais, seu progresso do Pomodoro, nível e XP. Deseja continuar?'
+    );
+    if (!confirmRestore) return;
+
+    setDriveStatus({ type: 'info', message: 'Baixando e aplicando backup do Google Drive...' });
+    const res = await restoreFromGoogleDrive();
+    if (res.success) {
+      setDriveStatus({ type: 'success', message: res.message });
+    } else {
+      setDriveStatus({ type: 'error', message: res.message });
+    }
+  };
+
+  const handleExportCSVDrive = async () => {
+    const csvContent = generateCompletedTasksCSV();
+    if (!csvContent) {
+      setDriveStatus({ type: 'error', message: 'Você não possui tarefas concluídas no histórico para exportar!' });
+      return;
+    }
+
+    setDriveStatus({ type: 'info', message: 'Exportando relatório CSV para o Google Drive...' });
+    const res = await exportCSVToGoogleDrive(csvContent);
+    if (res.success) {
+      setDriveStatus({ type: 'success', message: res.message });
+    } else {
+      setDriveStatus({ type: 'error', message: res.message });
     }
   };
 
@@ -167,6 +509,231 @@ function DashboardContent() {
       "Concluídas": completedCount,
     };
   });
+
+  // Draggable Board Task Card Component
+  const renderBoardTaskCard = (task: Task, hideDate: boolean = false) => {
+    let priorityColor = '';
+    if (task.priority === 'high') priorityColor = 'bg-rose-500';
+    else if (task.priority === 'medium') priorityColor = 'bg-amber-500';
+    else priorityColor = 'bg-emerald-500';
+
+    const isOverdue = task.dueDate && !task.completed && new Date(task.dueDate) < new Date(new Date().toISOString().split('T')[0]);
+
+    return (
+      <div
+        key={task.id}
+        draggable
+        onDragStart={(e) => handleDragStart(e, task.id)}
+        onClick={(e) => {
+          e.stopPropagation();
+          handleOpenEditModal(task);
+        }}
+        className={`group relative flex flex-col gap-2 rounded-xl border p-3 transition-all cursor-grab active:cursor-grabbing hover:shadow-md border-l-4 select-none ${
+          task.isSynced && task.googleEventId
+            ? 'border-cyan-500/80 shadow-[0_0_12px_rgba(6,182,212,0.25)] bg-slate-950/90'
+            : 'border-slate-850 bg-slate-950 hover:bg-slate-900 hover:border-slate-700'
+        }`}
+        style={{ borderLeftColor: task.priority === 'high' ? '#f43f5e' : task.priority === 'medium' ? '#f59e0b' : '#10b981' }}
+      >
+        <div className="flex items-start justify-between gap-1.5">
+          <div className="min-w-0">
+            <span className="rounded-full bg-slate-900/80 px-1.5 py-0.5 font-mono text-[8px] font-bold text-slate-400 uppercase tracking-wider border border-slate-850">
+              {task.category}
+            </span>
+            <h5 className="font-sans font-semibold text-xs text-slate-200 group-hover:text-amber-400 mt-1 line-clamp-2 leading-tight">
+              {task.title}
+            </h5>
+          </div>
+          <motion.button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleTaskComplete(task.id);
+            }}
+            onMouseEnter={playHoverTickSound}
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+            className="flex h-4.5 w-4.5 flex-shrink-0 items-center justify-center rounded border border-slate-800 bg-slate-950 hover:bg-amber-500/10 cursor-pointer"
+          >
+            {task.completed && <CheckCircle2 className="h-3 w-3 stroke-[3] text-amber-500" />}
+          </motion.button>
+        </div>
+
+        {task.description && (
+          <p className="text-[10px] text-slate-500 line-clamp-2 leading-normal">
+            {task.description}
+          </p>
+        )}
+
+        <div className="flex items-center justify-between pt-1.5 mt-0.5 font-mono text-[9px] text-slate-550 border-t border-slate-900">
+          <span className="flex items-center gap-0.5">
+            🍅 {task.pomodoroCount || 0}/{task.pomodorosTarget || 1}
+          </span>
+          {!hideDate && task.dueDate && (
+            <span className={`font-mono flex items-center gap-0.5 ${isOverdue ? 'text-rose-450 font-bold' : ''}`}>
+              📅 {task.dueDate.split('-').slice(1).reverse().join('/')}
+            </span>
+          )}
+          {!task.isSynced && (
+            <span className="flex items-center gap-0.5 text-[8px] font-bold text-amber-500 uppercase tracking-tighter">
+              ● offline
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderBoardView = () => {
+    const weekDays = getWeekDays();
+    const inboxTasks = tasks.filter(t => !t.dueDate && !t.completed);
+
+    const filteredInbox = inboxTasks.filter(t => {
+      const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        (t.description && t.description.toLowerCase().includes(searchQuery.toLowerCase()));
+      const matchesCategory = categoryFilter === 'all' || t.category === categoryFilter;
+      return matchesSearch && matchesCategory;
+    });
+
+    return (
+      <div className="space-y-6 animate-feed-in w-full">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+          
+          {/* Column A: Caixa de Entrada / Gaveta de Ideias */}
+          <div 
+            onDragOver={handleDragOver}
+            onDrop={handleDropOnInbox}
+            className="xl:col-span-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-4 min-h-[480px] transition-all"
+            style={{ contentVisibility: 'auto' }}
+          >
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
+                  <Layers className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="font-sans text-xs font-black tracking-wider uppercase text-slate-200">
+                    Gaveta de Ideias
+                  </h3>
+                  <p className="text-[10px] text-slate-550">Arrastar para cá desagenda tarefa</p>
+                </div>
+              </div>
+              <span className="rounded-full bg-slate-950 px-2.5 py-0.5 font-mono text-[10px] font-bold text-amber-500 border border-slate-850">
+                {filteredInbox.length}
+              </span>
+            </div>
+
+            {/* List inner */}
+            <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
+              {filteredInbox.length === 0 ? (
+                <div className="text-center py-12 border border-dashed border-slate-850 rounded-xl bg-slate-950/20">
+                  <Layers className="h-7 w-7 text-slate-750 mx-auto stroke-[1.5]" />
+                  <p className="text-xs font-semibold text-slate-400 mt-2">Sua Gaveta está limpa!</p>
+                  <p className="text-[10px] text-slate-500 mt-1 max-w-xs mx-auto px-2 leading-relaxed">
+                    Crie tarefas sem data de entrega para guardá-las aqui ou use os Modelos Prontos rápidos à direita.
+                  </p>
+                </div>
+              ) : (
+                filteredInbox.map(task => renderBoardTaskCard(task))
+              )}
+            </div>
+            
+            <button
+              onClick={handleOpenCreateModal}
+              className="w-full mt-2 py-2.5 border border-dashed border-slate-800 hover:border-amber-500/30 rounded-xl font-sans text-xs font-semibold text-slate-400 hover:text-amber-400 transition-colors bg-slate-950/20 text-center flex items-center justify-center gap-1 cursor-pointer"
+            >
+              <Plus className="h-3.5 w-3.5" /> Adicionar na Gaveta
+            </button>
+
+            {/* Quick Import Templates for local enxuto heuristics */}
+            <div className="pt-3 border-t border-slate-850 mt-2 space-y-2">
+              <p className="text-[10px] font-bold text-slate-450 uppercase tracking-widest block">
+                ⚡ Modelos de Foco Local
+              </p>
+              <div className="flex flex-col gap-1.5">
+                {TASK_TEMPLATES.map(tpl => (
+                  <button
+                    key={tpl.id}
+                    onClick={() => handleImportTemplate(tpl)}
+                    className="w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded-lg border border-slate-850 bg-slate-950/40 hover:bg-slate-900 transition-colors text-[11px] font-semibold text-slate-300 hover:text-amber-400 group cursor-pointer"
+                    title={tpl.description}
+                  >
+                    <span className="flex items-center gap-1.5 truncate">
+                      <span>{tpl.icon}</span> <span className="truncate">{tpl.name}</span>
+                    </span>
+                    <span className="text-[9px] font-mono font-bold bg-slate-900 px-1 py-0.5 rounded text-amber-500 group-hover:bg-amber-500/15 flex-shrink-0">
+                      + Importar
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Column B: Weekly Planner */}
+          <div className="xl:col-span-8 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-850/50 pb-2">
+              <div>
+                <h3 className="font-sans text-xs font-extrabold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
+                  📅 Planejador Semanal (Board)
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Arrastar e soltar tarefas para agendar seu ritmo semanal de estudos de forma tátil.
+                </p>
+              </div>
+            </div>
+
+            {/* 7 Days Grid Board */}
+            <div className="grid grid-cols-1 md:grid-cols-7 gap-3 pb-2 overflow-x-auto">
+              {weekDays.map(day => {
+                const dayTasks = tasks.filter(t => t.dueDate === day.dateStr && !t.completed);
+                
+                return (
+                  <div
+                    key={day.dateStr}
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDropOnDay(e, day.dateStr)}
+                    className={`rounded-xl border p-3 flex flex-col gap-3 min-h-[440px] transition-all duration-250 ${
+                      day.isToday
+                        ? 'bg-slate-900 border-amber-500/40 shadow-lg shadow-amber-500/5'
+                        : 'bg-slate-900/40 border-slate-800 hover:border-slate-850'
+                    }`}
+                  >
+                    {/* Day Header */}
+                    <div className="flex items-center justify-between border-b border-slate-850 pb-2">
+                      <div className="min-w-0">
+                        <p className={`text-[10px] font-black uppercase tracking-wider ${
+                          day.isToday ? 'text-amber-500 font-extrabold' : 'text-slate-400 font-semibold'
+                        }`}>
+                          {day.name}
+                        </p>
+                        <p className="text-xs font-mono font-bold text-slate-200">{day.dayOfMonth}</p>
+                      </div>
+                      <span className="rounded-full bg-slate-950 px-1.5 py-0.5 font-mono text-[9px] text-slate-400 font-semibold border border-slate-850">
+                        {dayTasks.length}
+                      </span>
+                    </div>
+
+                    {/* Day Tasks Inner List */}
+                    <div className="flex-1 flex flex-col gap-2 overflow-y-auto max-h-[360px]">
+                      {dayTasks.length === 0 ? (
+                        <div className="flex-1 flex items-center justify-center p-2 border border-dashed border-slate-850 bg-slate-950/10 rounded-lg text-center min-h-[80px]">
+                          <p className="text-[9px] leading-snug font-mono text-slate-700 tracking-tight">Vazio</p>
+                        </div>
+                      ) : (
+                        dayTasks.map(task => renderBoardTaskCard(task, true))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-amber-500 selection:text-slate-950">
@@ -262,6 +829,24 @@ function DashboardContent() {
         </div>
       </header>
 
+      {/* Simulated Offline Active Alert Banner */}
+      {isOfflineSimulated && (
+        <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 sm:px-6">
+          <div className="mx-auto max-w-7xl flex items-center justify-between text-xs font-semibold text-amber-400">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-amber-500 animate-ping" />
+              <span>Conexão Simulada Desconectada: Alterações salvas localmente e agendadas na fila de sincronização.</span>
+            </div>
+            <button
+              onClick={() => setIsOfflineSimulated(false)}
+              className="px-2.5 py-1 bg-amber-500 text-slate-950 font-black rounded-lg hover:bg-amber-400 transition-colors uppercase text-[9px] cursor-pointer"
+            >
+              Conectar Nuvem
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Gamification Stats Banner */}
       <section className="bg-slate-900/40 border-b border-slate-900 px-4 py-5 sm:px-6">
         <div className="mx-auto max-w-7xl">
@@ -310,18 +895,27 @@ function DashboardContent() {
 
             {/* Sync State monitor Panel */}
             <div className="md:col-span-3 flex items-center justify-between bg-slate-900/80 p-4 rounded-xl border border-slate-800">
-              <div>
+              <div className="space-y-1">
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Nuvem Offline-First</p>
-                <p className="text-lg font-black mt-0.5 text-slate-100 flex items-center gap-1.5">
+                <p className="text-lg font-black mt-0.5 text-slate-100 flex items-center gap-1.5 leading-none">
                   {unsyncedCount === 0 ? (
                     <span className="text-emerald-400">Dados Sincronizados</span>
                   ) : (
                     <span className="text-amber-500">{unsyncedCount} Pendentes</span>
                   )}
                 </p>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Atua localmente, sincroniza em background.
-                </p>
+                {/* Simulation toggle */}
+                <button
+                  onClick={() => setIsOfflineSimulated(!isOfflineSimulated)}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[9px] font-bold uppercase transition-all cursor-pointer ${
+                    isOfflineSimulated 
+                      ? 'bg-rose-500/15 border-rose-500/30 text-rose-450 hover:bg-rose-500/30 font-black' 
+                      : 'bg-emerald-500/5 border-emerald-500/15 text-emerald-400 hover:bg-emerald-500/15'
+                  }`}
+                  title={isOfflineSimulated ? 'Clique para simular rede conectada' : 'Clique para simular rede desconectada'}
+                >
+                  {isOfflineSimulated ? '🔌 Simulação: Offline' : '🌐 Simulação: Conectado'}
+                </button>
               </div>
 
               <button
@@ -473,10 +1067,40 @@ function DashboardContent() {
           </div>
         ) : (
           /* Actual Interactive Product Applet */
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          <div className="space-y-6">
             
-            {/* Left Column: Tasks index, Filters, Searches */}
-            <div className="lg:col-span-7 space-y-6">
+            {/* Sub-view Section Switcher (Board vs List) */}
+            <div className="flex bg-slate-900 border border-slate-850 p-1 rounded-xl max-w-xs shadow-md">
+              <button
+                onClick={() => setSubView('board')}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                  subView === 'board'
+                    ? 'bg-amber-500 text-slate-950 font-extrabold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Calendar className="h-3.5 w-3.5" /> Quadro Semanal
+              </button>
+              <button
+                onClick={() => setSubView('list')}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                  subView === 'list'
+                    ? 'bg-amber-500 text-slate-950 font-extrabold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Layers className="h-3.5 w-3.5" /> Lista Tradicional
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+              
+              {/* Left Column: Tasks index, Filters, Searches (dynamic span) */}
+              <div className={`${subView === 'board' ? 'lg:col-span-12' : 'lg:col-span-7'} space-y-6`}>
+                {subView === 'board' ? (
+                  renderBoardView()
+                ) : (
+                  <>
               
               {/* Tooling Bar (Actions, categories selectors, priority filters) */}
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-slate-900 p-4 rounded-xl border border-slate-800">
@@ -486,7 +1110,13 @@ function DashboardContent() {
                     type="text"
                     placeholder="Buscar tarefas..."
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => {
+                      const nextVal = e.target.value;
+                      if (searchQuery === '' && nextVal !== '') {
+                        playSearchSound();
+                      }
+                      setSearchQuery(nextVal);
+                    }}
                     className="w-full rounded-xl border border-slate-800 bg-slate-950 pl-9 pr-4 py-2 text-sm text-slate-300 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500/20 placeholder:text-slate-600"
                   />
                 </div>
@@ -534,14 +1164,25 @@ function DashboardContent() {
                     Mostrando <span className="font-bold text-amber-500">{filteredTasks.length}</span> {filteredTasks.length === 1 ? 'tarefa' : 'tarefas'}
                   </span>
                   {completedCount > 0 && (
-                    <button
-                      onClick={clearCompletedTasks}
-                      className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-400 hover:bg-rose-500/15 hover:border-rose-500/40 active:scale-[0.98] transition-all font-bold cursor-pointer"
-                      title="Excluir todas as tarefas marcadas como concluídas do histórico"
-                    >
-                      <Trash2 className="h-3.5 w-3.5 text-rose-400" />
-                      <span>Limpar Completas ({completedCount})</span>
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={exportCompletedTasksToCSV}
+                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-emerald-500/20 bg-emerald-500/5 text-emerald-400 hover:bg-emerald-500/15 hover:border-emerald-500/40 active:scale-[0.98] transition-all font-bold cursor-pointer"
+                        title="Exportar todas as tarefas concluídas para um arquivo CSV"
+                      >
+                        <Download className="h-3.5 w-3.5 text-emerald-400" />
+                        <span>Exportar CSV</span>
+                      </button>
+
+                      <button
+                        onClick={clearCompletedTasks}
+                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-400 hover:bg-rose-500/15 hover:border-rose-500/40 active:scale-[0.98] transition-all font-bold cursor-pointer"
+                        title="Excluir todas as tarefas marcadas como concluídas do histórico"
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+                        <span>Limpar Completas ({completedCount})</span>
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
@@ -591,12 +1232,15 @@ function DashboardContent() {
                           layout
                           initial={{ opacity: 0, x: -15 }}
                           animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: 100 }}
+                          exit={task.completed ? { opacity: 0, y: 15 } : { opacity: 0, x: 100 }}
                           transition={{ duration: 0.25, ease: 'easeInOut' }}
-                          className={`group relative flex items-start gap-4 rounded-xl border p-4 transition-all ${
+                          onClick={() => handleOpenEditModal(task)}
+                          className={`group relative flex items-start gap-4 rounded-xl border p-4 transition-all cursor-pointer ${
                             task.completed
-                              ? 'bg-slate-900/15 border-slate-900 text-slate-500'
-                              : 'bg-slate-900 hover:border-slate-800 text-slate-200 hover:shadow-md'
+                              ? 'bg-slate-900/15 border-slate-900 text-slate-500 hover:bg-slate-900/25 hover:border-slate-800'
+                              : task.isSynced && task.googleEventId
+                                ? 'bg-slate-900/90 border-cyan-500/80 text-slate-200 shadow-[0_0_12px_rgba(6,182,212,0.25)] hover:bg-slate-850 hover:shadow-[0_0_15px_rgba(6,182,212,0.35)]'
+                                : 'bg-slate-900 hover:bg-slate-850 hover:border-slate-700 text-slate-200 hover:shadow-md'
                           } ${activeTaskId === task.id ? 'ring-2 ring-amber-500/50' : ''}`}
                         >
                           {/* Custom Interactive Checkbox */}
@@ -606,6 +1250,7 @@ function DashboardContent() {
                               e.stopPropagation();
                               toggleTaskComplete(task.id);
                             }}
+                            onMouseEnter={playHoverTickSound}
                             whileHover={{ scale: 1.15 }}
                             whileTap={{ scale: 0.85 }}
                             transition={{ type: 'spring', stiffness: 500, damping: 15 }}
@@ -616,16 +1261,19 @@ function DashboardContent() {
                               borderColor: task.completed ? '#f59e0b' : '#334155',
                             }}
                           >
-                            {task.completed && (
-                              <motion.div
-                                initial={{ scale: 0 }}
-                                animate={{ scale: 1 }}
-                                transition={{ type: 'spring', stiffness: 450, damping: 15 }}
-                                className="flex items-center justify-center"
-                              >
-                                <CheckCircle2 className="CheckCircle2 h-3.5 w-3.5 text-[#020617] stroke-[3]" />
-                              </motion.div>
-                            )}
+                            <AnimatePresence>
+                              {task.completed && (
+                                <motion.div
+                                  initial={{ scale: 0, rotate: -360 }}
+                                  animate={{ scale: 1, rotate: 0 }}
+                                  exit={{ scale: 0, rotate: -360 }}
+                                  transition={{ type: 'spring', stiffness: 450, damping: 15 }}
+                                  className="flex items-center justify-center"
+                                >
+                                  <CheckCircle2 className="CheckCircle2 h-3.5 w-3.5 text-[#020617] stroke-[3]" />
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
                           </motion.button>
 
                           <div className="flex-1 min-w-0 space-y-1.5">
@@ -653,11 +1301,82 @@ function DashboardContent() {
                                 )}
                               </div>
 
-                              <p className={`font-sans font-semibold text-sm leading-tight mt-1.5 ${
-                                task.completed ? 'line-through text-slate-500' : 'text-slate-100'
-                              }`}>
-                                {task.title}
-                              </p>
+                              <div className="flex items-center gap-1.5 mt-1.5">
+                                <p className={`font-sans font-semibold text-sm leading-tight ${
+                                  task.completed ? 'line-through text-slate-500' : 'text-slate-100'
+                                }`}>
+                                  {task.title}
+                                </p>
+                                <div className="relative inline-block">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setActiveReminderPopoverTaskId(
+                                        activeReminderPopoverTaskId === task.id ? null : task.id
+                                      );
+                                    }}
+                                    className={`group/bell flex items-center justify-center p-1 rounded-md transition-all hover:bg-slate-800/60 cursor-pointer ${
+                                      task.reminderMinutes !== undefined && task.reminderMinutes > 0
+                                        ? 'text-amber-500'
+                                        : 'text-slate-500 hover:text-slate-300'
+                                    }`}
+                                    title="Ajustar lembrete"
+                                  >
+                                    <Bell 
+                                      className={`h-3.5 w-3.5 flex-shrink-0 ${
+                                        task.reminderMinutes !== undefined && task.reminderMinutes > 0
+                                          ? 'fill-amber-500 text-amber-500'
+                                          : 'text-slate-500'
+                                      }`}
+                                    />
+                                  </button>
+
+                                  {activeReminderPopoverTaskId === task.id && (
+                                    <div 
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="absolute left-0 mt-1.5 z-50 w-44 rounded-xl border border-slate-800 bg-slate-950 p-2 shadow-2xl animate-in fade-in slide-in-from-top-1 duration-150"
+                                    >
+                                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-2 pb-1.5 border-b border-slate-900 flex items-center justify-between">
+                                        <span>Alertar lembrete</span>
+                                      </p>
+                                      <div className="flex flex-col gap-0.5 mt-1.5">
+                                        {[
+                                          { value: 0, label: 'Sem lembrete' },
+                                          { value: 5, label: '5 min antes' },
+                                          { value: 15, label: '15 min antes' },
+                                          { value: 30, label: '30 min antes' },
+                                          { value: 45, label: '45 min antes' },
+                                          { value: 60, label: '1 hora antes' },
+                                          { value: 120, label: '2 horas antes' },
+                                          { value: 1440, label: '1 dia antes' },
+                                        ].map((opt) => {
+                                          const isSelected = (task.reminderMinutes ?? 0) === opt.value;
+                                          return (
+                                            <button
+                                              key={opt.value}
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                updateTask(task.id, { reminderMinutes: opt.value });
+                                                setActiveReminderPopoverTaskId(null);
+                                              }}
+                                              className={`w-full text-left font-sans text-xs px-2 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center justify-between ${
+                                                isSelected
+                                                  ? 'bg-amber-500/10 text-amber-400 font-semibold'
+                                                  : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
+                                              }`}
+                                            >
+                                              <span>{opt.label}</span>
+                                              {isSelected && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
                             </div>
 
                             {/* Description details */}
@@ -689,7 +1408,8 @@ function DashboardContent() {
                             {/* Link focus task button */}
                             {!task.completed && (
                               <button
-                                onClick={() => {
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   setActiveTaskId(task.id);
                                   playFocusSound();
                                   // Scroll to focus widget if view on mobile
@@ -708,7 +1428,10 @@ function DashboardContent() {
 
                             {/* Edit task context icon */}
                             <button
-                              onClick={() => handleOpenEditModal(task)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenEditModal(task);
+                              }}
                               className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-850 hover:text-slate-200 transition-colors cursor-pointer"
                               title="Editar especificações"
                             >
@@ -717,7 +1440,8 @@ function DashboardContent() {
 
                             {/* Trash delete task context icon */}
                             <button
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 if (confirm('Deseja realmente deletar esta tarefa de seu portfólio MVP?')) {
                                   deleteTask(task.id);
                                   if (activeTaskId === task.id) setActiveTaskId(null);
@@ -735,10 +1459,12 @@ function DashboardContent() {
                   </AnimatePresence>
                 )}
               </div>
-            </div>
+            </>
+          )}
+        </div>
 
-            {/* Right Column: Pomodoro focus console, design rules context card */}
-            <div className="lg:col-span-5 space-y-6">
+        {/* Right Column: Pomodoro focus console, design rules context card (dynamic layout) */}
+        <div className={`${subView === 'board' ? 'lg:col-span-12 grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 border-t border-slate-900' : 'lg:col-span-5 space-y-6'}`}>
               
               {/* Pomodoro Focus Console card */}
               <div id="focus-card-section">
@@ -818,6 +1544,137 @@ function DashboardContent() {
                     </button>
                   </div>
                 )}
+
+                <div className="border-t border-slate-800/80 pt-4 mt-2 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-xs font-sans font-semibold text-slate-200">
+                      <Bell className="h-3.5 w-3.5 text-amber-500" /> Lembrete Padrão (Agenda)
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-sans">Para novas tarefas</span>
+                  </div>
+                  <select
+                    value={defaultReminderMinutes}
+                    onChange={(e) => setDefaultReminderMinutes(Number(e.target.value))}
+                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 font-sans text-xs text-slate-300 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500/20 cursor-pointer"
+                  >
+                    <option value={0}>Sem lembrete</option>
+                    <option value={5}>5 minutos antes</option>
+                    <option value={15}>15 minutos antes</option>
+                    <option value={30}>30 minutos antes</option>
+                    <option value={45}>45 minutos antes</option>
+                    <option value={60}>1 hora antes</option>
+                    <option value={120}>2 horas antes</option>
+                    <option value={1440}>1 dia antes</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Google Drive Integration card */}
+              <div className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-950 p-6 space-y-4 shadow-xl">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <h4 className="flex items-center gap-1.5 font-sans font-bold text-slate-100">
+                      <HardDrive className="h-4 w-4 text-emerald-400" /> Google Drive Nuvem
+                    </h4>
+                    <p className="text-[11px] text-slate-400">Backup seguro de progresso e relatórios</p>
+                  </div>
+                  
+                  {isGoogleConnected ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-500 uppercase tracking-wider">
+                      ● Ativo
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-500 uppercase tracking-wider">
+                      ○ Inativo
+                    </span>
+                  )}
+                </div>
+
+                {driveStatus && (
+                  <div className={`rounded-xl border p-3 text-xs flex items-start gap-2.5 transition-all ${
+                    driveStatus.type === 'success' 
+                      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' 
+                      : driveStatus.type === 'error'
+                      ? 'bg-rose-500/10 border-rose-500/20 text-rose-300'
+                      : 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+                  }`}>
+                    <div className="mt-0.5 flex-shrink-0">
+                      {driveStatus.type === 'success' ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                      ) : driveStatus.type === 'error' ? (
+                        <Trash2 className="h-4 w-4 text-rose-400" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4 text-amber-400 animate-spin" />
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <p className="leading-relaxed">{driveStatus.message}</p>
+                    </div>
+                    <button 
+                      onClick={() => setDriveStatus(null)} 
+                      className="text-slate-500 hover:text-slate-350 cursor-pointer font-sans text-xs font-bold px-1"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
+                {isGoogleConnected ? (
+                  <div className="space-y-4 pt-1">
+                    {/* Backup & Restore sub-section */}
+                    <div className="space-y-2 rounded-xl bg-slate-950/80 border border-slate-900 p-3.5">
+                      <div className="flex items-center gap-1.5">
+                        <CloudUpload className="h-4 w-4 text-amber-500" />
+                        <span className="font-sans text-xs font-bold text-slate-200">Snapshots de Progresso</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 leading-normal">
+                        Salve tarefas locais, nível, histórico de Pomodoros e XP para restauração em qualquer dispositivo.
+                      </p>
+                      <div className="grid grid-cols-2 gap-2 pt-1.5">
+                        <button
+                          onClick={handleBackupDrive}
+                          disabled={isGoogleDriveOperating}
+                          className="rounded-xl border border-slate-800 bg-slate-900/60 hover:bg-slate-850 px-3 py-2 text-center font-sans text-xs font-bold text-slate-200 hover:text-white transition-all cursor-pointer disabled:opacity-50"
+                        >
+                          {isGoogleDriveOperating ? 'Sincronizando...' : 'Fazer Backup'}
+                        </button>
+                        <button
+                          onClick={handleRestoreDrive}
+                          disabled={isGoogleDriveOperating}
+                          className="rounded-xl border border-slate-850 bg-slate-950/40 hover:bg-slate-900 px-3 py-2 text-center font-sans text-xs font-bold text-slate-300 hover:text-slate-200 transition-all cursor-pointer disabled:opacity-50"
+                        >
+                          Restaurar
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* CSV backup sub-section */}
+                    <div className="space-y-2 rounded-xl bg-slate-950/80 border border-slate-900 p-3.5">
+                      <div className="flex items-center gap-1.5">
+                        <CloudDownload className="h-4 w-4 text-emerald-400" />
+                        <span className="font-sans text-xs font-bold text-slate-200">Exportar Histórico CSV</span>
+                      </div>
+                      <p className="text-[11px] text-slate-400 leading-normal">
+                        Gere e salve uma planilha profissional de todas as suas tarefas completadas diretamente na nuvem.
+                      </p>
+                      <div className="pt-1.5">
+                        <button
+                          onClick={handleExportCSVDrive}
+                          disabled={isGoogleDriveOperating}
+                          className="w-full rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-3 py-2 text-center font-sans text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                        >
+                          Exportar Relatório CSV para Drive
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Conecte sua conta do Google nas configurações de agenda acima para ativar também o módulo de Google Drive. Salvamentos seguros da sua jornada em tempo real!
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Tips banner card */}
@@ -842,7 +1699,8 @@ function DashboardContent() {
             </div>
 
           </div>
-        )}
+        </div>
+      )}
       </main>
 
       {/* Task Creation & Editing Multi-Modal Component */}
@@ -852,6 +1710,7 @@ function DashboardContent() {
         onSubmit={handleModalSubmit}
         taskToEdit={taskToEdit}
         isGoogleConnected={isGoogleConnected}
+        defaultReminderMinutes={defaultReminderMinutes}
       />
     </div>
   );

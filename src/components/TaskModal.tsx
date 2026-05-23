@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Calendar, Clock, AlertTriangle, Layers, Flame, BookOpen, Target } from 'lucide-react';
+import { X, Calendar, Clock, AlertTriangle, Layers, Flame, BookOpen, Target, Bell, Sparkles } from 'lucide-react';
 import { Task, TaskPriority } from '../types';
+import { detectScheduleFromText } from '../lib/smartScheduler';
 
 interface TaskModalProps {
   isOpen: boolean;
@@ -16,14 +17,16 @@ interface TaskModalProps {
     pomodorosTarget: number;
     recurrence: 'none' | 'daily' | 'weekly' | 'biweekly' | 'monthly';
     syncWithGoogle: boolean;
+    reminderMinutes?: number;
   }) => void;
   taskToEdit?: Task | null;
   isGoogleConnected?: boolean;
+  defaultReminderMinutes?: number;
 }
 
 const CATEGORIES = ['Estudo', 'Trabalho', 'Pessoal', 'Saúde', 'Finanças', 'Outros'];
 
-export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit, isGoogleConnected = false }: TaskModalProps) {
+export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit, isGoogleConnected = false, defaultReminderMinutes = 15 }: TaskModalProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
@@ -33,9 +36,12 @@ export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit, isGoo
   const [pomodorosTarget, setPomodorosTarget] = useState(1);
   const [recurrence, setRecurrence] = useState<'none' | 'daily' | 'weekly' | 'biweekly' | 'monthly'>('none');
   const [syncWithGoogle, setSyncWithGoogle] = useState(true);
+  const [reminderMinutes, setReminderMinutes] = useState<number>(defaultReminderMinutes);
   const [errors, setErrors] = useState<{ title?: string }>({});
+  const [detectedLabel, setDetectedLabel] = useState<string>('');
 
   useEffect(() => {
+    setDetectedLabel('');
     if (taskToEdit) {
       setTitle(taskToEdit.title);
       setDescription(taskToEdit.description || '');
@@ -46,6 +52,7 @@ export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit, isGoo
       setPomodorosTarget(taskToEdit.pomodorosTarget || 1);
       setRecurrence(taskToEdit.recurrence || 'none');
       setSyncWithGoogle(taskToEdit.syncWithGoogle ?? isGoogleConnected);
+      setReminderMinutes(taskToEdit.reminderMinutes ?? defaultReminderMinutes);
     } else {
       // Reset to defaults
       setTitle('');
@@ -58,9 +65,10 @@ export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit, isGoo
       setPomodorosTarget(1);
       setRecurrence('none');
       setSyncWithGoogle(isGoogleConnected);
+      setReminderMinutes(defaultReminderMinutes);
     }
     setErrors({});
-  }, [taskToEdit, isOpen, isGoogleConnected]);
+  }, [taskToEdit, isOpen, isGoogleConnected, defaultReminderMinutes]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,6 +86,7 @@ export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit, isGoo
       pomodorosTarget,
       recurrence,
       syncWithGoogle,
+      reminderMinutes,
     });
     onClose();
   };
@@ -128,16 +137,32 @@ export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit, isGoo
                   type="text"
                   value={title}
                   onChange={(e) => {
-                    setTitle(e.target.value);
+                    const val = e.target.value;
+                    setTitle(val);
                     if (errors.title) setErrors({});
+                    
+                    // Instant NLP Local Heuristics
+                    const r = detectScheduleFromText(val);
+                    if (r.matches) {
+                      setDueDate(r.dateStr);
+                      setDetectedLabel(r.label);
+                    } else {
+                      setDetectedLabel('');
+                    }
                   }}
-                  placeholder="Ex: Desenhar os fluxogramas da arquitetura SUPABASE"
+                  placeholder="Ex: Desenhar os fluxogramas da arquitetura amanhã"
                   className={`w-full rounded-xl border bg-slate-950 px-4 py-3 font-sans text-sm text-slate-150 transition-all placeholder:text-slate-600 focus:outline-none focus:ring-2 ${
                     errors.title
                       ? 'border-rose-500/50 focus:border-rose-500 focus:ring-rose-500/20'
                       : 'border-slate-800 focus:border-amber-500 focus:ring-amber-500/20'
                   }`}
                 />
+                {detectedLabel && (
+                  <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 text-xs text-amber-400 font-medium">
+                    <Sparkles className="h-3.5 w-3.5 text-amber-500 fill-amber-500/20 shrink-0" />
+                    <span>Agendamento inteligente local: <strong>{detectedLabel}</strong> adicionado de forma automatizada!</span>
+                  </div>
+                )}
                 {errors.title && (
                   <p className="flex items-center gap-1.5 text-xs text-rose-400">
                     <AlertTriangle className="h-3 w-3" /> {errors.title}
@@ -172,7 +197,7 @@ export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit, isGoo
                 </div>
                 <div className="space-y-1.5">
                   <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
-                    <Clock className="h-3.5 w-3.5 text-amber-500/80" /> Horário dól
+                     <Clock className="h-3.5 w-3.5 text-amber-500/80" /> Horário dól
                   </label>
                   <input
                     type="time"
@@ -181,6 +206,27 @@ export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit, isGoo
                     className="w-full rounded-xl border border-slate-800 bg-slate-950 px-4 py-3 font-sans text-xs text-slate-300 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                   />
                 </div>
+              </div>
+
+              {/* Lembrete minutes field */}
+              <div className="space-y-1.5">
+                <label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  <Bell className="h-3.5 w-3.5 text-amber-500/80" /> Lembrete (Minutos Antes)
+                </label>
+                <select
+                  value={reminderMinutes}
+                  onChange={(e) => setReminderMinutes(Number(e.target.value))}
+                  className="w-full rounded-xl border border-slate-800 bg-slate-950 px-4 py-3 font-sans text-xs text-slate-300 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 cursor-pointer"
+                >
+                  <option value={0}>Sem lembrete</option>
+                  <option value={5}>5 minutos antes</option>
+                  <option value={15}>15 minutos antes</option>
+                  <option value={30}>30 minutos antes</option>
+                  <option value={45}>45 minutos antes</option>
+                  <option value={60}>1 hora antes</option>
+                  <option value={120}>2 horas antes</option>
+                  <option value={1440}>1 dia antes</option>
+                </select>
               </div>
 
               {/* Priority Select */}

@@ -7,9 +7,10 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
-// Request Google Calendar scopes
+// Request Google Calendar and Google Drive scopes
 provider.addScope('https://www.googleapis.com/auth/calendar.events');
 provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
+provider.addScope('https://www.googleapis.com/auth/drive.file');
 
 // Cache the access token in memory
 let cachedAccessToken: string | null = null;

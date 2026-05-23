@@ -17,6 +17,7 @@ export interface Task {
   recurrence?: 'none' | 'daily' | 'weekly' | 'biweekly' | 'monthly';
   googleEventId?: string;
   syncWithGoogle?: boolean;
+  reminderMinutes?: number; // Minutes before dueTime for reminder
 }
 
 export interface TaskState {
@@ -30,6 +31,7 @@ export interface TaskState {
   searchQuery: string;
   soundEnabled: boolean;
   theme: 'light' | 'dark';
+  defaultReminderMinutes: number;
 }
 
 export interface TaskContextType extends TaskState {
@@ -44,7 +46,9 @@ export interface TaskContextType extends TaskState {
   addPomodoroSession: (id: string) => void;
   resetXP: () => void;
   setSoundEnabled: (enabled: boolean) => void;
+  setDefaultReminderMinutes: (minutes: number) => void;
   playFocusSound: () => void;
+  playSearchSound: () => void;
   toggleTheme: () => void;
   clearCompletedTasks: () => void;
 
@@ -56,4 +60,16 @@ export interface TaskContextType extends TaskState {
   disconnectGoogle: () => Promise<void>;
   syncAllTasksToGoogle: () => Promise<void>;
   syncTaskToGoogle: (taskId: string) => Promise<void>;
+
+  // Offline & Queued Sync support
+  isOfflineSimulated: boolean;
+  setIsOfflineSimulated: (simulated: boolean) => void;
+  syncQueue: string[];
+  processSyncQueue: () => Promise<void>;
+
+  // Google Drive Integration states & methods
+  isGoogleDriveOperating: boolean;
+  backupToGoogleDrive: () => Promise<{ success: boolean; message: string }>;
+  restoreFromGoogleDrive: () => Promise<{ success: boolean; message: string }>;
+  exportCSVToGoogleDrive: (csvContent: string) => Promise<{ success: boolean; message: string }>;
 }

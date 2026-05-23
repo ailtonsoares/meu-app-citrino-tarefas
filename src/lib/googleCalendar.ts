@@ -85,6 +85,15 @@ export async function createCalendarEvent(task: Partial<Task>, token: string): P
     eventData.recurrence = recurrenceList;
   }
 
+  if (task.reminderMinutes !== undefined && task.reminderMinutes > 0) {
+    eventData.reminders = {
+      useDefault: false,
+      overrides: [
+        { method: 'popup', minutes: task.reminderMinutes }
+      ]
+    };
+  }
+
   const url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
   const res = await fetch(url, {
     method: 'POST',
@@ -164,6 +173,20 @@ export async function updateCalendarEvent(eventId: string, task: Partial<Task>, 
     // If updating to none but previous was recurring, we reset by not providing recurrence,
     // Google API requires put with empty/unset recurrence to remove it
     eventData.recurrence = null;
+  }
+
+  if (task.reminderMinutes !== undefined && task.reminderMinutes > 0) {
+    eventData.reminders = {
+      useDefault: false,
+      overrides: [
+        { method: 'popup', minutes: task.reminderMinutes }
+      ]
+    };
+  } else if (task.reminderMinutes === 0) {
+    eventData.reminders = {
+      useDefault: false,
+      overrides: []
+    };
   }
 
   const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`;

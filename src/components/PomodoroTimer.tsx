@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Play, Pause, RotateCcw, Flame, CheckCircle2, Moon, Sun, AlertCircle } from 'lucide-react';
-import { motion } from 'motion/react';
+import { Play, Pause, RotateCcw, Flame, CheckCircle2, Moon, Sun, AlertCircle, Lightbulb, Sparkles } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Task } from '../types';
 
 interface PomodoroTimerProps {
@@ -21,6 +21,28 @@ export default function PomodoroTimer({
   const [isRunning, setIsRunning] = useState(false);
   const [accelerated, setAccelerated] = useState(false); // To let reviewers easily test completion fast
   
+  const FOCUS_TIPS = [
+    "A técnica Pomodoro funciona melhor ao silenciar notificações. Elimine distrações externas!",
+    "Use o intervalo de 5 minutos para se alongar, beber água ou respirar fundo longe das telas.",
+    "Focar em uma única tarefa evita o desperdício de energia cognitiva pela troca de contexto.",
+    "Grandes marcos são conquistados em blocos. Consistência diária supera picos de intensidade.",
+    "Evite checar redes sociais na pausa para dar um tempo real de regeneração ao córtex pré-frontal.",
+    "Se o foco flutuar, tudo bem. Apenas reinicie o cronômetro com calma e persista.",
+    "Divida demandas complexas em metas menores estimadas em blocos de 25 minutos.",
+    "Seu cérebro precisa de pausas rítmicas para fixar o aprendizado e consolidar a memória.",
+    "Mantenha uma folha física ao lado para anotar ideias intrusivas e limpar o fluxo mental.",
+    "Hidrate-se! Um simples gole de água oxigena o cérebro e melhora o desempenho cognitivo."
+  ];
+
+  const [currentTip, setCurrentTip] = useState(FOCUS_TIPS[0]);
+
+  useEffect(() => {
+    // Select a random tip that differs from the current one to guarantee variety
+    const available = FOCUS_TIPS.filter(tip => tip !== currentTip);
+    const chosen = available[Math.floor(Math.random() * available.length)];
+    setCurrentTip(chosen);
+  }, [mode]);
+
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const activeTask = tasks.find((t) => t.id === activeTaskId);
@@ -271,6 +293,35 @@ export default function PomodoroTimer({
               </div>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Dicas de Foco (Focus Tips) Segment */}
+      <div className="mt-5 pt-4 border-t border-slate-800/60">
+        <div className="rounded-xl border border-slate-800/50 bg-slate-950/45 p-3.5 shadow-sm">
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <div className="flex p-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
+              <Lightbulb className="h-3.5 w-3.5" />
+            </div>
+            <span className="font-sans text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+              Dicas de Foco <Sparkles className="h-3 w-3 text-amber-500/80" />
+            </span>
+          </div>
+          
+          <div className="relative overflow-hidden min-h-[36px]">
+            <AnimatePresence mode="wait">
+              <motion.p
+                key={currentTip}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.22 }}
+                className="font-sans text-[11.5px] leading-relaxed text-slate-350"
+              >
+                {currentTip}
+              </motion.p>
+            </AnimatePresence>
+          </div>
         </div>
       </div>
     </div>
