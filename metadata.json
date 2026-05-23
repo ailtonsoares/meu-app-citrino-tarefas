@@ -1,0 +1,6 @@
+{
+  "name": "Citrino Tarefas",
+  "description": "Um gerenciador de tarefas offline-first moderno com interface premium, foco em micro-interações, persistência local e integridade de dados.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

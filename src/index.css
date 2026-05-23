@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+:root {
+  /* Default Theme: Dark */
+  --theme-slate-950: #020617;
+  --theme-slate-900: #0f172a;
+  --theme-slate-850: #1e293b;
+  --theme-slate-800: #1e293b;
+  --theme-slate-100: #f8fafc;
+  --theme-slate-150: #e2e8f0;
+  --theme-slate-200: #cbd5e1;
+  --theme-slate-300: #94a3b8;
+  --theme-slate-400: #64748b;
+  --theme-slate-500: #475569;
+  --theme-slate-550: #334155;
+  --theme-slate-600: #1e293b;
+  --theme-slate-700: #0f172a;
+  --theme-white: #ffffff;
+}
+
+:root.light, .light {
+  /* Light Theme Overrides */
+  --theme-slate-950: #f8fafc; /* Page Background: slate-50 */
+  --theme-slate-900: #ffffff; /* Cards/Toolbars: pure white */
+  --theme-slate-850: #f1f5f9; /* Border-muted: slate-100 */
+  --theme-slate-800: #e2e8f0; /* Borders: slate-200 */
+  --theme-slate-100: #020617; /* Text primary: slate-950 */
+  --theme-slate-150: #111827; /* Text secondary: gray-900 */
+  --theme-slate-200: #1f2937; /* Text medium: gray-800 */
+  --theme-slate-300: #374151; /* Text helper: gray-700 */
+  --theme-slate-400: #4b5563; /* Text descriptions: gray-600 */
+  --theme-slate-500: #6b7280; /* Text metadata: gray-500 */
+  --theme-slate-550: #9ca3af; /* Text unselected: gray-400 */
+  --theme-slate-600: #d1d5db; /* Borders unselected: gray-300 */
+  --theme-slate-700: #e5e7eb; /* Border light: gray-200 */
+  --theme-white: #0f172a; /* Dark text for primary */
+}
+
+@theme {
+  --color-slate-950: var(--theme-slate-950);
+  --color-slate-900: var(--theme-slate-900);
+  --color-slate-850: var(--theme-slate-850);
+  --color-slate-800: var(--theme-slate-800);
+  --color-slate-100: var(--theme-slate-100);
+  --color-slate-150: var(--theme-slate-150);
+  --color-slate-200: var(--theme-slate-200);
+  --color-slate-300: var(--theme-slate-300);
+  --color-slate-400: var(--theme-slate-400);
+  --color-slate-500: var(--theme-slate-500);
+  --color-slate-550: var(--theme-slate-550);
+  --color-slate-600: var(--theme-slate-600);
+  --color-slate-700: var(--theme-slate-700);
+  --color-white: var(--theme-white);
+}
+
+/* CSS Selector interactive styling for Citrino task checkmark triggers */
+@keyframes checkmark-pulse {
+  0%, 100% {
+    transform: scale(1.2) rotate(10deg);
+  }
+  50% {
+    transform: scale(1.4) rotate(15deg);
+    filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.6));
+  }
+}
+
+@keyframes button-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+  }
+}
+
+.group button:has(svg.CheckCircle2) {
+  transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.2s ease, border-color 0.2s ease;
+  animation: button-pulse 2s infinite ease-in-out;
+}
+
+.group button:has(svg.CheckCircle2):hover {
+  transform: scale(1.15) rotate(360deg);
+}
+
+.group button:has(svg.CheckCircle2) svg.CheckCircle2 {
+  transform: scale(1.2) rotate(10deg);
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: checkmark-pulse 2s infinite ease-in-out;
+}
