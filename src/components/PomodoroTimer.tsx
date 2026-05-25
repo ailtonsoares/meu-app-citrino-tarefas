@@ -20,6 +20,8 @@ export default function PomodoroTimer({
   const [secondsLeft, setSecondsLeft] = useState(25 * 60);
   const [isRunning, setIsRunning] = useState(false);
   const [accelerated, setAccelerated] = useState(false); // To let reviewers easily test completion fast
+  const [tipsTab, setTipsTab] = useState<'focus' | 'mindfulness'>('mindfulness');
+  const [mindfulnessCategory, setMindfulnessCategory] = useState<'pausas' | 'foco' | 'restauradora' | 'estrategia'>('pausas');
   
   const FOCUS_TIPS = [
     "A técnica Pomodoro funciona melhor ao silenciar notificações. Elimine distrações externas!",
@@ -296,33 +298,197 @@ export default function PomodoroTimer({
         </div>
       </div>
 
-      {/* Dicas de Foco (Focus Tips) Segment */}
+      {/* Dynamic Tips & Mindfulness segment switcher */}
       <div className="mt-5 pt-4 border-t border-slate-800/60">
-        <div className="rounded-xl border border-slate-800/50 bg-slate-950/45 p-3.5 shadow-sm">
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <div className="flex p-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
-              <Lightbulb className="h-3.5 w-3.5" />
-            </div>
-            <span className="font-sans text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
-              Dicas de Foco <Sparkles className="h-3 w-3 text-amber-500/80" />
-            </span>
-          </div>
-          
-          <div className="relative overflow-hidden min-h-[36px]">
-            <AnimatePresence mode="wait">
-              <motion.p
-                key={currentTip}
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-                transition={{ duration: 0.22 }}
-                className="font-sans text-[11.5px] leading-relaxed text-slate-350"
-              >
-                {currentTip}
-              </motion.p>
-            </AnimatePresence>
+        <div className="flex items-center justify-between mb-3 border-b border-slate-850 pb-2">
+          <div className="flex gap-2">
+            <button
+              onClick={() => setTipsTab('mindfulness')}
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer border ${
+                tipsTab === 'mindfulness'
+                  ? 'bg-amber-500/10 border-amber-500/25 text-amber-400 font-extrabold'
+                  : 'bg-transparent border-transparent text-slate-500 hover:text-slate-350'
+              }`}
+            >
+              🧘 Mindfulness
+            </button>
+            <button
+              onClick={() => setTipsTab('focus')}
+              className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer border ${
+                tipsTab === 'focus'
+                  ? 'bg-amber-500/10 border-amber-500/25 text-amber-400 font-extrabold'
+                  : 'bg-transparent border-transparent text-slate-500 hover:text-slate-350'
+              }`}
+            >
+              💡 Dicas de Foco
+            </button>
           </div>
         </div>
+
+        {tipsTab === 'mindfulness' ? (
+          <div className="space-y-3">
+            {/* Mindfulness category pills */}
+            <div className="flex flex-wrap gap-1 bg-slate-950 p-1 rounded-xl border border-slate-850">
+              <button
+                type="button"
+                onClick={() => setMindfulnessCategory('pausas')}
+                className={`flex-1 min-w-[65px] text-center py-1 rounded-lg text-[9px] font-bold uppercase transition-all cursor-pointer truncate ${
+                  mindfulnessCategory === 'pausas'
+                    ? 'bg-amber-500 text-slate-950 font-black'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                🌬️ Pausas
+              </button>
+              <button
+                type="button"
+                onClick={() => setMindfulnessCategory('foco')}
+                className={`flex-1 min-w-[65px] text-center py-1 rounded-lg text-[9px] font-bold uppercase transition-all cursor-pointer truncate ${
+                  mindfulnessCategory === 'foco'
+                    ? 'bg-amber-500 text-slate-950 font-black'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                🧠 Foco
+              </button>
+              <button
+                type="button"
+                onClick={() => setMindfulnessCategory('restauradora')}
+                className={`flex-1 min-w-[65px] text-center py-1 rounded-lg text-[9px] font-bold uppercase transition-all cursor-pointer truncate ${
+                  mindfulnessCategory === 'restauradora'
+                    ? 'bg-amber-500 text-slate-950 font-black'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                🌱 Pausas +
+              </button>
+              <button
+                type="button"
+                onClick={() => setMindfulnessCategory('estrategia')}
+                className={`flex-1 min-w-[65px] text-center py-1 rounded-lg text-[9px] font-bold uppercase transition-all cursor-pointer truncate ${
+                  mindfulnessCategory === 'estrategia'
+                    ? 'bg-amber-500 text-slate-950 font-black'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                📊 Estratégia
+              </button>
+            </div>
+
+            {/* Mindfulness items content output */}
+            <div className="rounded-xl border border-slate-800/50 bg-slate-950/45 p-3.5 space-y-3 min-h-[110px]">
+              {mindfulnessCategory === 'pausas' && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-1">
+                    <span className="text-amber-500 text-xs">🌬️</span>
+                    <h4 className="font-sans text-[11px] font-black text-slate-200 uppercase tracking-wider">Pausas conscientes</h4>
+                  </div>
+                  <ul className="space-y-2 text-[11px] text-slate-350 leading-relaxed font-sans">
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-500 mt-0.5">•</span>
+                      <span><strong>Respiração 4-4-4:</strong> inspire por 4 segundos, segure por 4, expire por 4. Repita 3 vezes.</span>
+                    </li>
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-500 mt-0.5">•</span>
+                      <span><strong>Mini check-in:</strong> quando parar, pergunte a si mesmo: “Como estou me sentindo agora?” sem julgamento.</span>
+                    </li>
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-500 mt-0.5">•</span>
+                      <span><strong>Alongamento rápido:</strong> levante, estique braços e pernas, perceba as sensações físicas.</span>
+                    </li>
+                  </ul>
+                </div>
+              )}
+
+              {mindfulnessCategory === 'foco' && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-1">
+                    <span className="text-amber-500 text-xs">🧠</span>
+                    <h4 className="font-sans text-[11px] font-black text-slate-200 uppercase tracking-wider">Concentração plena</h4>
+                  </div>
+                  <ul className="space-y-2 text-[11px] text-slate-350 leading-relaxed font-sans">
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-500 mt-0.5">•</span>
+                      <span><strong>Pomodoro mindful:</strong> trabalhe 25 minutos focado, depois faça 5 minutos de pausa consciente (respiração ou caminhada curta).</span>
+                    </li>
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-500 mt-0.5">•</span>
+                      <span><strong>Single-tasking:</strong> escolha uma tarefa e faça apenas ela, evitando multitarefa.</span>
+                    </li>
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-500 mt-0.5">•</span>
+                      <span><strong>Observação do ambiente:</strong> antes de começar, olhe ao redor e perceba detalhes (cores, sons, temperatura).</span>
+                    </li>
+                  </ul>
+                </div>
+              )}
+
+              {mindfulnessCategory === 'restauradora' && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-1">
+                    <span className="text-amber-500 text-xs">🌱</span>
+                    <h4 className="font-sans text-[11px] font-black text-slate-200 uppercase tracking-wider">Pausas restauradoras</h4>
+                  </div>
+                  <ul className="space-y-2 text-[11px] text-slate-350 leading-relaxed font-sans">
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-500 mt-0.5">•</span>
+                      <span><strong>Caminhada consciente:</strong> ande devagar, prestando atenção nos passos e na respiração.</span>
+                    </li>
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-500 mt-0.5">•</span>
+                      <span><strong>Mindful coffee/tea:</strong> quando beber algo, perceba o aroma, sabor e temperatura, sem distrações.</span>
+                    </li>
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-500 mt-0.5">•</span>
+                      <span><strong>Micro-meditação:</strong> feche os olhos por 2 minutos e foque apenas na respiração.</span>
+                    </li>
+                  </ul>
+                </div>
+              )}
+
+              {mindfulnessCategory === 'estrategia' && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-1">
+                    <span className="text-amber-500 text-xs">📊</span>
+                    <h4 className="font-sans text-[11px] font-black text-slate-200 uppercase tracking-wider">Estratégia para o dia</h4>
+                  </div>
+                  <ul className="space-y-2 text-[11px] text-slate-350 leading-relaxed font-sans">
+                    <li className="flex items-start gap-1.5">
+                      <span className="text-amber-500 mt-0.5">•</span>
+                      <span><strong>Manhã:</strong> 2 minutos de respiração consciente antes de começar as tarefas.</span>
+                    </li>
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-slate-800/50 bg-slate-950/45 p-3.5 shadow-sm min-h-[110px]">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <div className="flex p-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400">
+                <Lightbulb className="h-3.5 w-3.5" />
+              </div>
+              <span className="font-sans text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                Dicas de Foco <Sparkles className="h-3 w-3 text-amber-500/80" />
+              </span>
+            </div>
+            
+            <div className="relative overflow-hidden min-h-[36px]">
+              <AnimatePresence mode="wait">
+                <motion.p
+                  key={currentTip}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.22 }}
+                  className="font-sans text-[11.5px] leading-relaxed text-slate-350"
+                >
+                  {currentTip}
+                </motion.p>
+              </AnimatePresence>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

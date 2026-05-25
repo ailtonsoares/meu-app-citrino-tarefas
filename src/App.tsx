@@ -5,7 +5,7 @@ import { Task, TaskPriority } from './types';
 import { SyncQueueDB } from './lib/syncQueueDb';
 import TaskModal from './components/TaskModal';
 import PomodoroTimer from './components/PomodoroTimer';
-import PlanningDocument from './components/PlanningDocument';
+import WeeklyPlanner from './components/WeeklyPlanner';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -59,6 +59,8 @@ function DashboardContent() {
     theme,
     defaultReminderMinutes,
     setDefaultReminderMinutes,
+    autoClearFrequency,
+    setAutoClearFrequency,
     addTask,
     updateTask,
     deleteTask,
@@ -100,10 +102,11 @@ function DashboardContent() {
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [taskToEdit, setTaskToEdit] = useState<Task | null>(null);
-  const [viewMode, setViewMode] = useState<'app' | 'specs'>('app'); // Switch between working web app & tech spec
+  const [viewMode, setViewMode] = useState<'app' | 'semana'>('app'); // Switch between working web app & weekly scheduler
   const [driveStatus, setDriveStatus] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [activeReminderPopoverTaskId, setActiveReminderPopoverTaskId] = useState<string | null>(null);
-  const [subView, setSubView] = useState<'board' | 'list'>('board');
+  const [subView, setSubView] = useState<'board' | 'list'>('list');
+  const [showStats, setShowStats] = useState(false);
 
   // Daily Reset & Ritual states
   const [isOpeningRitualVisible, setIsOpeningRitualVisible] = useState(() => {
@@ -681,7 +684,7 @@ function DashboardContent() {
                   ? 'bg-amber-500/25 border-amber-400 text-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.2)] font-black' 
                   : 'bg-slate-950 border-slate-850 text-slate-550 hover:text-slate-350 hover:border-slate-700'
               }`}
-              title={task.isPriorityDay ? "Remover do Top 3 Prioridades do Dia" : "Marcar como Foco do Dia"}
+              title={task.isPriorityDay ? "Remover das Prioridades do Dia" : "Marcar como Foco do Dia"}
             >
               <Star className={`h-3 w-3 ${task.isPriorityDay ? 'fill-current' : ''}`} />
             </motion.button>
@@ -696,9 +699,18 @@ function DashboardContent() {
               onMouseEnter={playHoverTickSound}
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
-              className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border border-slate-800 bg-slate-950 hover:bg-amber-500/10 cursor-pointer"
+              className="group/tooltip relative flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border border-slate-800 bg-slate-950 hover:bg-amber-500/10 cursor-pointer"
             >
-              {task.completed && <CheckCircle2 className="h-3.5 w-3.5 stroke-[3] text-amber-500" />}
+              {/* Tooltip */}
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 pointer-events-none opacity-0 scale-90 group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100 transition-all duration-150 z-50">
+                <div className="bg-slate-950 text-slate-200 border border-slate-800 text-[10px] font-medium px-2 py-1 rounded shadow-lg whitespace-nowrap leading-none select-none">
+                  Concluir Tarefa
+                </div>
+                <div className="w-1.5 h-1.5 bg-slate-950 border-r border-b border-slate-800 rotate-45 mx-auto -mt-1"></div>
+              </div>
+
+              <CheckCircle2 className="CheckCircle2 h-3.5 w-3.5 opacity-0 pointer-events-none absolute" />
+              {task.completed && <CheckCircle2 className="CheckCircle2 h-3.5 w-3.5 stroke-[3] text-amber-500" />}
             </motion.button>
           </div>
         </div>
@@ -917,13 +929,13 @@ function DashboardContent() {
       <div className="fixed bottom-10 right-1/4 -z-10 h-96 w-96 rounded-full bg-indigo-505/5 blur-[120px] pointer-events-none" />
 
       {/* Header Bar */}
-      <header className="sticky top-0 z-40 border-b border-slate-900 bg-slate-950/85 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
+      <header className="sticky top-0 z-40 border-b border-slate-900 bg-slate-950/85 backdrop-blur-md py-1.5 sm:py-0">
+        <div className="mx-auto flex flex-col md:flex-row gap-3 items-center justify-between px-4 py-3 sm:px-6">
           <div className="flex items-center gap-2.5">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-600 to-yellow-400 text-slate-950 shadow-md shadow-amber-500/10 active:scale-95 transition-transform">
               <Sparkles className="h-5 w-5 fill-current" />
             </div>
-            <div>
+            <div className="text-center md:text-left">
               <h1 className="font-sans text-sm font-black tracking-tight text-white uppercase sm:text-base">
                 Citrino <span className="text-amber-500">Tarefas</span>
               </h1>
@@ -934,7 +946,24 @@ function DashboardContent() {
           </div>
 
           {/* Sprints vs Dashboard Mode Controls */}
-          <div className="flex items-center gap-2.5">
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-2.5">
+            {/* Statistics & Progress Toggle */}
+            <button
+              onClick={() => {
+                setShowStats(!showStats);
+                playFocusSound();
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                showStats
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-500 hover:bg-amber-500/20'
+                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-850 hover:text-slate-200'
+              }`}
+              title={showStats ? 'Ocultar Gráficos e XP Gamificado' : 'Visualizar Gráficos e XP Gamificado'}
+            >
+              <Trophy className={`h-3.5 w-3.5 ${showStats ? 'text-amber-500 animate-bounce' : 'text-slate-400'}`} />
+              <span className="hidden sm:inline">{showStats ? 'Ocultar Estatísticas' : 'Estatísticas'}</span>
+            </button>
+
             {/* Theme Toggle Button */}
             <button
               onClick={toggleTheme}
@@ -989,14 +1018,14 @@ function DashboardContent() {
                 <CheckCircle className="h-3.5 w-3.5" /> Dashboard
               </button>
               <button
-                onClick={() => setViewMode('specs')}
+                onClick={() => setViewMode('semana')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer ${
-                  viewMode === 'specs'
+                  viewMode === 'semana'
                     ? 'bg-amber-500 text-slate-950 font-extrabold shadow-sm'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <FileCode className="h-3.5 w-3.5" /> Planejador Técnico
+                <Calendar className="h-3.5 w-3.5" /> Semana
               </button>
             </div>
           </div>
@@ -1022,7 +1051,15 @@ function DashboardContent() {
       )}
 
       {/* Gamification Stats Banner */}
-      <section className="bg-slate-900/40 border-b border-slate-900 px-4 py-5 sm:px-6">
+      <AnimatePresence>
+        {showStats && (
+          <motion.section 
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.3, ease: 'easeInOut' }}
+            className="bg-slate-900/40 border-b border-slate-900 px-4 py-5 sm:px-6 overflow-hidden"
+          >
         <div className="mx-auto max-w-7xl">
           <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
             
@@ -1229,15 +1266,24 @@ function DashboardContent() {
 
           </div>
         </div>
-      </section>
+          </motion.section>
+        )}
+      </AnimatePresence>
 
       {/* Main Content Area */}
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         
-        {viewMode === 'specs' ? (
+        {viewMode === 'semana' ? (
           /* Plain Documentation view selected */
           <div className="space-y-6 animate-feed-in">
-            <PlanningDocument />
+            <WeeklyPlanner 
+              tasks={tasks}
+              addTask={addTask}
+              updateTask={updateTask}
+              deleteTask={deleteTask}
+              toggleTaskComplete={toggleTaskComplete}
+              defaultReminderMinutes={defaultReminderMinutes}
+            />
           </div>
         ) : (
           /* Actual Interactive Product Applet */
@@ -1264,7 +1310,7 @@ function DashboardContent() {
               </motion.div>
             )}
 
-            {/* 🎯 ELITE DIÁRIA: SEU TOP 3 FOCUS */}
+            {/* 🎯 JORNADA: SEUS PRINCIPAIS FOCOS */}
             <div className="rounded-2xl border border-amber-500/20 bg-gradient-to-br from-slate-900/95 to-slate-950 p-5 shadow-lg shadow-amber-500/5 relative overflow-hidden">
               <div className="absolute top-0 right-0 h-32 w-32 rounded-full bg-amber-500/5 blur-2xl pointer-events-none" />
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
@@ -1273,10 +1319,10 @@ function DashboardContent() {
                     <span className="flex h-5 w-5 items-center justify-center rounded-md bg-amber-500/10 text-amber-500">
                       🎯
                     </span>
-                    Foco da Jornada / Elite Top 3 Diário
+                    Jornada
                   </h3>
                   <p className="text-[11px] text-slate-500 mt-0.5">
-                    Consagre exatamente 3 itens para manter clareza absoluta, blindar a mente e reduzir o peso de listas compridas.
+                    Defina exatamente 3 itens para manter foco absoluto, planejar o dia com clareza e reduzir a pressa de listas compridas.
                   </p>
                 </div>
 
@@ -1288,22 +1334,22 @@ function DashboardContent() {
                   }}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/25 border border-amber-500/20 hover:border-amber-500/40 text-amber-400 hover:text-white font-bold rounded-lg text-[10px] transition-all cursor-pointer uppercase tracking-wider"
                 >
-                  🌅 Refazer Ritual Matinal
+                  Refazer
                 </button>
               </div>
 
               {dayPriorityTasks.length === 0 ? (
                 <div className="text-center py-6 border border-dashed border-slate-850 rounded-xl bg-slate-950/20">
                   <Star className="h-6 w-6 text-slate-700 mx-auto animate-pulse" />
-                  <p className="text-xs font-semibold text-slate-400 mt-2">Nenhum foco de ouro consagrado hoje.</p>
+                  <p className="text-xs font-semibold text-slate-400 mt-2">Nenhum foco de ouro selecionado hoje.</p>
                   <p className="text-[10px] text-slate-500 mt-1 max-w-md mx-auto">
-                    Selecione até 3 tarefas prioritárias clicando nas estrelas (⭐) dos cards ou utilize o Ritual de Abertura para consagrar seus objetivos matinais.
+                    Selecione até 3 tarefas prioritárias clicando nas estrelas (⭐) dos cards ou defina os seus objetivos diarios.
                   </p>
                   <button
                     onClick={() => setIsOpeningRitualVisible(true)}
                     className="mt-3 inline-flex items-center gap-1 py-1 px-3 bg-amber-500 text-slate-950 font-black rounded-lg text-[10px] hover:bg-amber-400 transition-colors uppercase cursor-pointer"
                   >
-                    Abrir Ritual de Abertura 🌅
+                    Novo
                   </button>
                 </div>
               ) : (
@@ -1342,13 +1388,22 @@ function DashboardContent() {
                               <button
                                 onClick={() => toggleTaskComplete(task.id)}
                                 onMouseEnter={playHoverTickSound}
-                                className={`flex h-4.5 w-4.5 items-center justify-center rounded border ${
+                                className={`group/tooltip relative flex h-4.5 w-4.5 items-center justify-center rounded border ${
                                   task.completed 
                                     ? 'bg-amber-500 border-amber-500 text-slate-950' 
                                     : 'border-slate-800 bg-slate-950 hover:border-amber-500/40'
                                 } cursor-pointer`}
                               >
-                                {task.completed && <CheckCircle2 className="h-3 w-3 stroke-[3]" />}
+                                {/* Tooltip */}
+                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 pointer-events-none opacity-0 scale-90 group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100 transition-all duration-150 z-50">
+                                  <div className="bg-slate-950 text-slate-200 border border-slate-800 text-[10px] font-medium px-2 py-1 rounded shadow-lg whitespace-nowrap leading-none select-none">
+                                    Concluir Tarefa
+                                  </div>
+                                  <div className="w-1.5 h-1.5 bg-slate-950 border-r border-b border-slate-800 rotate-45 mx-auto -mt-1"></div>
+                                </div>
+
+                                <CheckCircle2 className="CheckCircle2 h-3 w-3 opacity-0 pointer-events-none absolute" />
+                                {task.completed && <CheckCircle2 className="CheckCircle2 h-3 w-3 stroke-[3]" />}
                               </button>
                             </div>
                           </div>
@@ -1393,46 +1448,16 @@ function DashboardContent() {
               )}
             </div>
 
-            {/* Sub-view Section Switcher (Board vs List) */}
-            <div className="flex bg-slate-900 border border-slate-850 p-1 rounded-xl max-w-xs shadow-md">
-              <button
-                onClick={() => setSubView('board')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg font-bold text-xs transition-all cursor-pointer ${
-                  subView === 'board'
-                    ? 'bg-amber-500 text-slate-950 font-extrabold shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <Calendar className="h-3.5 w-3.5" /> Quadro Semanal
-              </button>
-              <button
-                onClick={() => setSubView('list')}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg font-bold text-xs transition-all cursor-pointer ${
-                  subView === 'list'
-                    ? 'bg-amber-500 text-slate-950 font-extrabold shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <Layers className="h-3.5 w-3.5" /> Lista Tradicional
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+            {/* 🛠️ CENTRAL DE CONTROLE UNIFICADA */}
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between shadow-xl">
               
-              {/* Left Column: Tasks index, Filters, Searches (dynamic span) */}
-              <div className={`${subView === 'board' ? 'lg:col-span-12' : 'lg:col-span-7'} space-y-6`}>
-                {subView === 'board' ? (
-                  renderBoardView()
-                ) : (
-                  <>
-              
-              {/* Tooling Bar (Actions, categories selectors, priority filters) */}
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-slate-900 p-4 rounded-xl border border-slate-800">
+              {/* Pesquisa & Filtro Temático de Categorias */}
+              <div className="flex flex-col sm:flex-row gap-3 flex-1">
                 <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-550" />
+                  <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
                   <input
                     type="text"
-                    placeholder="Buscar tarefas..."
+                    placeholder="Buscar metas ou tarefas..."
                     value={searchQuery}
                     onChange={(e) => {
                       const nextVal = e.target.value;
@@ -1441,29 +1466,17 @@ function DashboardContent() {
                       }
                       setSearchQuery(nextVal);
                     }}
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950 pl-9 pr-4 py-2 text-sm text-slate-300 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500/20 placeholder:text-slate-600"
+                    className="w-full rounded-xl border border-slate-800 bg-slate-950 pl-10 pr-4 py-2 text-sm text-slate-300 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500/20 placeholder:text-slate-600 transition-all"
                   />
                 </div>
 
-                <div className="flex gap-2.5">
-                  <select
-                    value={filter}
-                    onChange={(e) => setFilter(e.target.value)}
-                    className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-400 focus:outline-none focus:border-amber-500 cursor-pointer"
-                  >
-                    <option value="all">Todas</option>
-                    <option value="pending">Abertas</option>
-                    <option value="completed">Concluídas</option>
-                    <option value="today">Hoje</option>
-                    <option value="high">Lendárias/Alta</option>
-                  </select>
-
+                <div className="flex gap-2">
                   <select
                     value={categoryFilter}
                     onChange={(e) => setCategoryFilter(e.target.value)}
-                    className="rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-400 focus:outline-none focus:border-amber-500 cursor-pointer"
+                    className="rounded-xl border border-slate-855 bg-slate-950 px-3.5 py-2 text-xs font-bold text-slate-400 focus:outline-none focus:border-amber-500 cursor-pointer hover:border-slate-700 transition-all min-w-[140px]"
                   >
-                    <option value="all">Categorias (Todas)</option>
+                    <option value="all">📁 Categorias (Todas)</option>
                     <option value="Estudo">Estudo</option>
                     <option value="Trabalho">Trabalho</option>
                     <option value="Pessoal">Pessoal</option>
@@ -1472,14 +1485,39 @@ function DashboardContent() {
                     <option value="Outros">Outros</option>
                   </select>
 
-                  <button
-                    onClick={handleOpenCreateModal}
-                    className="flex items-center gap-1.5 rounded-xl bg-amber-500 px-4 py-2 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer shadow-lg shadow-amber-500/10 transition-transform active:scale-[0.98]"
+                  {/* Filter Status Selector - Always visible now */}
+                  <select
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                    className="rounded-xl border border-slate-850 bg-slate-950 px-3.5 py-2 text-xs font-bold text-slate-400 focus:outline-none focus:border-amber-500 cursor-pointer hover:border-slate-700 transition-all min-w-[110px]"
                   >
-                    <Plus className="h-4 w-4 stroke-[2.5]" /> Criar
-                  </button>
+                    <option value="all">🔍 Todas Situações</option>
+                    <option value="pending">Abertas</option>
+                    <option value="completed">Concluídas</option>
+                    <option value="today">Hoje</option>
+                    <option value="high">Alta Prioridade</option>
+                  </select>
                 </div>
               </div>
+
+              {/* Botão de Criação de Tarefa */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                {/* Primary task creation CTA button */}
+                <button
+                  onClick={handleOpenCreateModal}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs px-5 py-2.5 cursor-pointer shadow-lg shadow-amber-500/10 transition-all active:scale-[0.98] uppercase tracking-wider shrink-0"
+                >
+                  <Plus className="h-4 w-4 stroke-[2.5]" /> Criar Tarefa
+                </button>
+              </div>
+
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+              
+              {/* Left Column: Tasks index, Filters, Searches */}
+              <div className="lg:col-span-7 space-y-6">
+                <>
 
               {/* Status and Action Row */}
               {tasks.length > 0 && (
@@ -1580,12 +1618,21 @@ function DashboardContent() {
                               whileTap={{ scale: 0.85 }}
                               transition={{ type: 'spring', stiffness: 500, damping: 15 }}
                               title={task.completed ? 'Desmarcar como pendente' : 'Marcar como concluída'}
-                              className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border text-slate-900 transition-colors cursor-pointer"
+                              className="group/tooltip relative flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border text-slate-900 transition-colors cursor-pointer"
                               style={{
                                 backgroundColor: task.completed ? '#f59e0b' : 'transparent',
                                 borderColor: task.completed ? '#f59e0b' : '#334155',
                               }}
                             >
+                              {/* Tooltip */}
+                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 pointer-events-none opacity-0 scale-90 group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100 transition-all duration-150 z-50">
+                                <div className="bg-slate-950 text-slate-200 border border-slate-800 text-[10px] font-medium px-2 py-1 rounded shadow-lg whitespace-nowrap leading-none select-none">
+                                  Concluir Tarefa
+                                </div>
+                                <div className="w-1.5 h-1.5 bg-slate-950 border-r border-b border-slate-800 rotate-45 mx-auto -mt-1"></div>
+                              </div>
+
+                              <CheckCircle2 className="CheckCircle2 h-3.5 w-3.5 opacity-0 pointer-events-none absolute" />
                               <AnimatePresence>
                                 {task.completed && (
                                   <motion.div
@@ -1612,7 +1659,7 @@ function DashboardContent() {
                                   ? 'bg-amber-500/25 border-amber-400 text-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.2)] font-black' 
                                   : 'bg-slate-950 border-slate-850 text-slate-550 hover:text-slate-350 hover:border-slate-700'
                               }`}
-                              title={task.isPriorityDay ? "Remover do Top 3 Prioridades do Dia" : "Marcar como Foco do Dia"}
+                              title={task.isPriorityDay ? "Remover das Prioridades do Dia" : "Marcar como Foco do Dia"}
                             >
                               <Star className={`h-3 w-3 ${task.isPriorityDay ? 'fill-current' : ''}`} />
                             </motion.button>
@@ -1861,11 +1908,10 @@ function DashboardContent() {
                 )}
               </div>
             </>
-          )}
-        </div>
+          </div>
 
-        {/* Right Column: Pomodoro focus console, design rules context card (dynamic layout) */}
-        <div className={`${subView === 'board' ? 'lg:col-span-12 grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 border-t border-slate-900' : 'lg:col-span-5 space-y-6'}`}>
+        {/* Right Column: Pomodoro focus console, design rules context card */}
+        <div className="lg:col-span-5 space-y-6">
               
               {/* Pomodoro Focus Console card */}
               <div id="focus-card-section">
@@ -1877,206 +1923,7 @@ function DashboardContent() {
                 />
               </div>
 
-              {/* Google Agenda Integration card */}
-              <div className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-950 p-6 space-y-4 shadow-xl">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <h4 className="flex items-center gap-1.5 font-sans font-bold text-slate-100">
-                      <Calendar className="h-4 w-4 text-amber-500" /> Google Agenda
-                    </h4>
-                    <p className="text-[11px] text-slate-400">Sincronize suas metas citrinas</p>
-                  </div>
-                  
-                  {isGoogleConnected ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-500 uppercase tracking-wider">
-                      ● Conectado
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-500 uppercase tracking-wider">
-                      ○ Desconectado
-                    </span>
-                  )}
-                </div>
 
-                {isGoogleConnected ? (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3 rounded-xl bg-slate-950 border border-slate-900 p-2.5">
-                      {googleUser?.photoURL ? (
-                        <img referrerPolicy="no-referrer" src={googleUser.photoURL} alt="Foto de perfil" className="h-8 w-8 rounded-full border border-slate-850" />
-                      ) : (
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-500/10 text-xs font-bold text-amber-500">G</div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-semibold text-slate-200">{googleUser?.displayName || 'Usuário Google'}</p>
-                        <p className="truncate font-mono text-[10px] text-slate-500">{googleUser?.email || ''}</p>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2">
-                      <button
-                        onClick={syncAllTasksToGoogle}
-                        disabled={isGoogleSyncing}
-                        className="flex-1 rounded-xl bg-amber-500 px-3 py-2 text-center font-sans text-xs font-bold text-slate-950 hover:bg-amber-400 transition-colors cursor-pointer disabled:opacity-50"
-                      >
-                        {isGoogleSyncing ? 'Sincronizando...' : 'Sincronizar Todas'}
-                      </button>
-                      
-                      <button
-                        onClick={disconnectGoogle}
-                        className="rounded-xl border border-slate-800 px-3 py-2 text-center font-sans text-xs font-medium text-slate-400 hover:text-rose-400 hover:border-rose-500/20 hover:bg-rose-500/5 transition-all cursor-pointer"
-                        title="Desconectar Integração"
-                      >
-                        Desconectar
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      Ative a sincronização para exportar automaticamente seus blocos de tarefas diárias, semanais, quinzenais ou mensais diretamente para a sua agenda em tempo real.
-                    </p>
-                    <button
-                      onClick={connectGoogle}
-                      disabled={isGoogleSyncing}
-                      className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 font-sans text-xs font-bold text-slate-200 hover:bg-slate-900 hover:border-slate-700 transition-all cursor-pointer shadow-md active:scale-[0.98]"
-                    >
-                      <img src="https://www.google.com/images/branding/googlelogo/1x/googlelogo_color_272x92dp.png" alt="Google" className="h-3" />
-                      {isGoogleSyncing ? 'Conectando...' : 'Conectar Google'}
-                    </button>
-                  </div>
-                )}
-
-                <div className="border-t border-slate-800/80 pt-4 mt-2 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 text-xs font-sans font-semibold text-slate-200">
-                      <Bell className="h-3.5 w-3.5 text-amber-500" /> Lembrete Padrão (Agenda)
-                    </span>
-                    <span className="text-[10px] text-slate-500 font-sans">Para novas tarefas</span>
-                  </div>
-                  <select
-                    value={defaultReminderMinutes}
-                    onChange={(e) => setDefaultReminderMinutes(Number(e.target.value))}
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 font-sans text-xs text-slate-300 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500/20 cursor-pointer"
-                  >
-                    <option value={0}>Sem lembrete</option>
-                    <option value={5}>5 minutos antes</option>
-                    <option value={15}>15 minutos antes</option>
-                    <option value={30}>30 minutos antes</option>
-                    <option value={45}>45 minutos antes</option>
-                    <option value={60}>1 hora antes</option>
-                    <option value={120}>2 horas antes</option>
-                    <option value={1440}>1 dia antes</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Google Drive Integration card */}
-              <div className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-950 p-6 space-y-4 shadow-xl">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <h4 className="flex items-center gap-1.5 font-sans font-bold text-slate-100">
-                      <HardDrive className="h-4 w-4 text-emerald-400" /> Google Drive Nuvem
-                    </h4>
-                    <p className="text-[11px] text-slate-400">Backup seguro de progresso e relatórios</p>
-                  </div>
-                  
-                  {isGoogleConnected ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-500 uppercase tracking-wider">
-                      ● Ativo
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-slate-800 px-2 py-0.5 font-mono text-[10px] text-slate-500 uppercase tracking-wider">
-                      ○ Inativo
-                    </span>
-                  )}
-                </div>
-
-                {driveStatus && (
-                  <div className={`rounded-xl border p-3 text-xs flex items-start gap-2.5 transition-all ${
-                    driveStatus.type === 'success' 
-                      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' 
-                      : driveStatus.type === 'error'
-                      ? 'bg-rose-500/10 border-rose-500/20 text-rose-300'
-                      : 'bg-amber-500/10 border-amber-500/20 text-amber-300'
-                  }`}>
-                    <div className="mt-0.5 flex-shrink-0">
-                      {driveStatus.type === 'success' ? (
-                        <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                      ) : driveStatus.type === 'error' ? (
-                        <Trash2 className="h-4 w-4 text-rose-400" />
-                      ) : (
-                        <RefreshCw className="h-4 w-4 text-amber-400 animate-spin" />
-                      )}
-                    </div>
-                    <div className="flex-1">
-                      <p className="leading-relaxed">{driveStatus.message}</p>
-                    </div>
-                    <button 
-                      onClick={() => setDriveStatus(null)} 
-                      className="text-slate-500 hover:text-slate-350 cursor-pointer font-sans text-xs font-bold px-1"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                )}
-
-                {isGoogleConnected ? (
-                  <div className="space-y-4 pt-1">
-                    {/* Backup & Restore sub-section */}
-                    <div className="space-y-2 rounded-xl bg-slate-950/80 border border-slate-900 p-3.5">
-                      <div className="flex items-center gap-1.5">
-                        <CloudUpload className="h-4 w-4 text-amber-500" />
-                        <span className="font-sans text-xs font-bold text-slate-200">Snapshots de Progresso</span>
-                      </div>
-                      <p className="text-[11px] text-slate-400 leading-normal">
-                        Salve tarefas locais, nível, histórico de Pomodoros e XP para restauração em qualquer dispositivo.
-                      </p>
-                      <div className="grid grid-cols-2 gap-2 pt-1.5">
-                        <button
-                          onClick={handleBackupDrive}
-                          disabled={isGoogleDriveOperating}
-                          className="rounded-xl border border-slate-800 bg-slate-900/60 hover:bg-slate-850 px-3 py-2 text-center font-sans text-xs font-bold text-slate-200 hover:text-white transition-all cursor-pointer disabled:opacity-50"
-                        >
-                          {isGoogleDriveOperating ? 'Sincronizando...' : 'Fazer Backup'}
-                        </button>
-                        <button
-                          onClick={handleRestoreDrive}
-                          disabled={isGoogleDriveOperating}
-                          className="rounded-xl border border-slate-850 bg-slate-950/40 hover:bg-slate-900 px-3 py-2 text-center font-sans text-xs font-bold text-slate-300 hover:text-slate-200 transition-all cursor-pointer disabled:opacity-50"
-                        >
-                          Restaurar
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* CSV backup sub-section */}
-                    <div className="space-y-2 rounded-xl bg-slate-950/80 border border-slate-900 p-3.5">
-                      <div className="flex items-center gap-1.5">
-                        <CloudDownload className="h-4 w-4 text-emerald-400" />
-                        <span className="font-sans text-xs font-bold text-slate-200">Exportar Histórico CSV</span>
-                      </div>
-                      <p className="text-[11px] text-slate-400 leading-normal">
-                        Gere e salve uma planilha profissional de todas as suas tarefas completadas diretamente na nuvem.
-                      </p>
-                      <div className="pt-1.5">
-                        <button
-                          onClick={handleExportCSVDrive}
-                          disabled={isGoogleDriveOperating}
-                          className="w-full rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-3 py-2 text-center font-sans text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
-                        >
-                          Exportar Relatório CSV para Drive
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <p className="text-xs text-slate-400 leading-relaxed">
-                      Conecte sua conta do Google nas configurações de agenda acima para ativar também o módulo de Google Drive. Salvamentos seguros da sua jornada em tempo real!
-                    </p>
-                  </div>
-                )}
-              </div>
 
               {/* Tips banner card */}
               <div className="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/80 to-slate-950 p-6">
@@ -2137,14 +1984,14 @@ function DashboardContent() {
               <div className="md:col-span-5 space-y-6">
                 <div>
                   <span className="text-amber-500 font-mono text-[9px] font-black uppercase tracking-widest bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full">
-                    🌅 Ritual Matinal Citrino
+                    🌅 Planejar Nova Jornada
                   </span>
                   <h2 className="font-sans text-xl sm:text-2xl font-black text-white mt-3 leading-tight tracking-tight uppercase">
                     Acalme a mente, <br />
                     <span className="text-amber-400">firme seus alicerces.</span>
                   </h2>
                   <p className="text-xs text-slate-400 leading-relaxed mt-2.5">
-                    O ritual de abertura bloqueia a ansiedade de listas infinitas. Antes de iniciar sua jornada diária, dedique um minuto para respirar consciente e consagrar no máximo 3 focos.
+                    Definir suas metas diárias traz foco e tranquilidade. Antes de iniciar suas tarefas, tire um momento para respirar conscientemente e selecionar no máximo 3 focos de atenção.
                   </p>
                 </div>
 
@@ -2189,10 +2036,10 @@ function DashboardContent() {
               <div className="md:col-span-7 flex flex-col h-full justify-between space-y-6">
                 <div>
                   <h3 className="font-sans text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5 mb-1">
-                    🎯 Consagre seu Top 3 Diário
+                    🎯 Selecione seus Focos Principais
                   </h3>
                   <p className="text-[11px] text-slate-500 leading-relaxed mb-4">
-                    Marque até 3 metas como o Foco Ouro de hoje. Elas ficarão consagradas no topo do seu painel de tarefas de visualização rápida.
+                    Marque até 3 metas como o Foco Principal de hoje. Elas serão exibidas no topo do seu painel para acesso rápido.
                   </p>
 
                   {/* Active selection counters indicator */}
@@ -2313,7 +2160,7 @@ function DashboardContent() {
                 {/* Footer Initiate Journey button */}
                 <div className="pt-4 border-t border-slate-800 flex items-center justify-between gap-4">
                   <p className="text-[10px] text-slate-500 leading-relaxed font-mono">
-                    Aperte para consagrar e ditar o compasso produtivo do dia atual.
+                    Confirme seus focos para iniciar o seu planejamento produtivo de hoje.
                   </p>
                   
                   <button
@@ -2358,7 +2205,7 @@ function DashboardContent() {
                     }}
                     className="flex items-center gap-1 px-5 py-3 bg-amber-500 hover:bg-amber-400 text-slate-550 hover:text-slate-950 font-black rounded-2xl text-xs transition-transform cursor-pointer shadow-lg active:scale-95 uppercase tracking-wide shrink-0 font-sans"
                   >
-                    <span>Consagrar Focus & Iniciar</span>
+                    <span>Iniciar Jornada</span>
                     <span>🌅</span>
                   </button>
                 </div>
@@ -2392,7 +2239,7 @@ function DashboardContent() {
 
               <div className="space-y-2">
                 <span className="font-mono text-[9px] font-black text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
-                  Jornada Consagrada
+                  Jornada Concluída
                 </span>
                 <h2 className="font-sans text-xl sm:text-2xl font-black text-white uppercase tracking-tight leading-tight mt-1">
                   100% de Conclusão <br />
@@ -2401,7 +2248,7 @@ function DashboardContent() {
               </div>
 
               <p className="text-xs text-slate-400 leading-relaxed max-w-sm mx-auto">
-                Parabéns! Você blindou sua clareza mental neutralizando sobrecarga de dados hoje. Suas 3 principais tarefas de ouro da elite produtiva foram concluídas perfeitamente!
+                Parabéns! Você planejou e executou sua jornada hoje, concluindo as 3 principais tarefas de foco com maestria!
               </p>
 
               {/* Bonus badge details */}
@@ -2412,7 +2259,7 @@ function DashboardContent() {
                 </div>
                 <div className="flex justify-between items-center text-slate-400">
                   <span>Recompensa Citrino Extra:</span>
-                  <span className="text-amber-500 font-black">+100 XP Extra do Ritual</span>
+                  <span className="text-amber-500 font-black">+100 XP Extra de Foco</span>
                 </div>
                 <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden border border-slate-850 mt-1">
                   <div className="h-full bg-gradient-to-r from-amber-600 to-yellow-400 rounded-full w-full" />

@@ -318,6 +318,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
   const [soundEnabled, setSoundEnabledState] = useState<boolean>(true);
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [defaultReminderMinutes, setDefaultReminderMinutesState] = useState<number>(15);
+  const [autoClearFrequency, setAutoClearFrequencyState] = useState<'none' | 'daily' | 'weekly' | 'monthly'>('none');
 
   // Google Calendar Integration States
   const [googleUser, setGoogleUser] = useState<any>(null);
@@ -402,6 +403,120 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Keep track of tasks that have already fired a notification in the current session / day
+  const notifiedTasksRef = useRef<Set<string>>(new Set());
+
+  // Load notified tasks on mount & request native notification permissions
+  useEffect(() => {
+    const savedNotified = localStorage.getItem('citrino_notified_task_ids');
+    if (savedNotified) {
+      try {
+        const parsed = JSON.parse(savedNotified) as string[];
+        notifiedTasksRef.current = new Set(parsed);
+      } catch (e) {
+        console.error('Failed to parse notified tasks from localStorage', e);
+      }
+    }
+
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        Notification.requestPermission().catch((err) => {
+          console.warn('Native notification permission request rejected/failed', err);
+        });
+      }
+    }
+  }, []);
+
+  // Helper to trigger native Notification instance with voice sound synthesis fallback
+  const triggerNativeNotification = (task: Task) => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+
+    if (Notification.permission === 'granted') {
+      const title = `Lembrete: ${task.title}`;
+      const options: NotificationOptions = {
+        body: `Sua tarefa da categoria "${task.category}" é para as ${task.dueTime}.\nPrioridade: ${
+          task.priority === 'high' ? 'Alta 🌟' : task.priority === 'medium' ? 'Média ⚡' : 'Fácil 🍀'
+        }`,
+        tag: task.id,
+        requireInteraction: true,
+      };
+
+      try {
+        const notification = new Notification(title, options);
+        notification.onclick = () => {
+          window.focus();
+          notification.close();
+        };
+
+        // Play the crystalline ding sound
+        playDingSound();
+      } catch (err) {
+        console.error('Failed to trigger native Notification instance:', err);
+      }
+    } else if (Notification.permission === 'default') {
+      Notification.requestPermission().then((perm) => {
+        if (perm === 'granted') {
+          triggerNativeNotification(task);
+        }
+      });
+    }
+  };
+
+  // Periodic background check for upcoming task reminders (offline-ready)
+  useEffect(() => {
+    const checkReminders = () => {
+      if (tasks.length === 0) return;
+      const nowTime = Date.now();
+      let changed = false;
+
+      tasks.forEach((task) => {
+        // Only verify pending/uncompleted tasks with valid dueDate and dueTime
+        if (task.completed || !task.dueDate || !task.dueTime) return;
+
+        // Skip if already notified
+        if (notifiedTasksRef.current.has(task.id)) return;
+
+        try {
+          const [year, month, day] = task.dueDate.split('-').map(Number);
+          const [hours, minutes] = task.dueTime.split(':').map(Number);
+
+          if (isNaN(year) || isNaN(month) || isNaN(day) || isNaN(hours) || isNaN(minutes)) return;
+
+          const dueDateTime = new Date(year, month - 1, day, hours, minutes, 0, 0);
+          const minutesBefore = task.reminderMinutes !== undefined ? task.reminderMinutes : defaultReminderMinutes;
+
+          const reminderDateTime = new Date(dueDateTime.getTime() - minutesBefore * 60 * 1000);
+          const reminderTime = reminderDateTime.getTime();
+          const dueTimeMs = dueDateTime.getTime();
+
+          // Trigger reminder if current time is within active reminder window
+          // Active window: from the reminder time up to 30 minutes past the due time
+          if (nowTime >= reminderTime && nowTime <= dueTimeMs + 30 * 60 * 1000) {
+            notifiedTasksRef.current.add(task.id);
+            changed = true;
+
+            triggerNativeNotification(task);
+          }
+        } catch (e) {
+          console.error('Error checking reminders for task ID:', task.id, e);
+        }
+      });
+
+      if (changed) {
+        localStorage.setItem(
+          'citrino_notified_task_ids',
+          JSON.stringify(Array.from(notifiedTasksRef.current))
+        );
+      }
+    };
+
+    // Run check immediately, then run every 15 seconds
+    checkReminders();
+    const interval = setInterval(checkReminders, 15000);
+
+    return () => clearInterval(interval);
+  }, [tasks, defaultReminderMinutes]);
+
   // Side-effect to apply theme class on document element
   useEffect(() => {
     const root = document.documentElement;
@@ -464,6 +579,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       }
 
       let storedDefaultReminder = localStorage.getItem('citrino_default_reminder_minutes');
+      let storedAutoClear = localStorage.getItem('citrino_auto_clear_frequency');
 
       if (storedTasks) {
         setTasks(JSON.parse(storedTasks));
@@ -488,6 +604,9 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       }
       if (storedDefaultReminder !== null) {
         setDefaultReminderMinutesState(parseInt(storedDefaultReminder, 10));
+      }
+      if (storedAutoClear === 'none' || storedAutoClear === 'daily' || storedAutoClear === 'weekly' || storedAutoClear === 'monthly') {
+        setAutoClearFrequencyState(storedAutoClear);
       }
     } catch (err) {
       console.error('Error loading tasks from localStorage:', err);
@@ -1256,6 +1375,53 @@ export function TaskProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  const setAutoClearFrequency = (frequency: 'none' | 'daily' | 'weekly' | 'monthly') => {
+    setAutoClearFrequencyState(frequency);
+    localStorage.setItem('citrino_auto_clear_frequency', frequency);
+    if (frequency !== 'none' && !localStorage.getItem('citrino_last_auto_clear_timestamp')) {
+      localStorage.setItem('citrino_last_auto_clear_timestamp', Date.now().toString());
+    }
+  };
+
+  // Automatic Cleanup Effect Based on Selected Frequency
+  useEffect(() => {
+    if (autoClearFrequency === 'none' || loading) return;
+
+    const lastClearStr = localStorage.getItem('citrino_last_auto_clear_timestamp');
+    const now = Date.now();
+    let threshold = 0;
+
+    if (autoClearFrequency === 'daily') {
+      threshold = 24 * 60 * 60 * 1000;
+    } else if (autoClearFrequency === 'weekly') {
+      threshold = 7 * 24 * 60 * 60 * 1000;
+    } else if (autoClearFrequency === 'monthly') {
+      threshold = 30 * 24 * 60 * 60 * 1000;
+    }
+
+    if (!lastClearStr) {
+      localStorage.setItem('citrino_last_auto_clear_timestamp', now.toString());
+      return;
+    }
+
+    const lastClear = parseInt(lastClearStr, 10);
+    if (isNaN(lastClear) || now - lastClear >= threshold) {
+      console.log(`[Database Optimization] Performing automatic cleanup of completed tasks (Frequency: ${autoClearFrequency})`);
+      setTasks((prevTasks) => {
+        const completedCount = prevTasks.filter(t => t.completed).length;
+        if (completedCount === 0) {
+          localStorage.setItem('citrino_last_auto_clear_timestamp', now.toString());
+          return prevTasks;
+        }
+
+        const updated = prevTasks.filter((task) => !task.completed);
+        localStorage.setItem('citrino_tasks_mvp', JSON.stringify(updated));
+        localStorage.setItem('citrino_last_auto_clear_timestamp', now.toString());
+        return updated;
+      });
+    }
+  }, [autoClearFrequency, loading]);
+
   const clearCompletedTasks = () => {
     const updated = tasks.filter((task) => !task.completed);
     saveTasksList(updated);
@@ -1275,6 +1441,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
         soundEnabled,
         theme,
         defaultReminderMinutes,
+        autoClearFrequency,
         addTask,
         updateTask,
         deleteTask,
@@ -1287,6 +1454,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
         resetXP,
         setSoundEnabled,
         setDefaultReminderMinutes,
+        setAutoClearFrequency,
         playFocusSound,
         playSearchSound,
         toggleTheme,

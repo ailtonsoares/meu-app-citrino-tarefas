@@ -40,6 +40,7 @@ export interface TaskState {
   soundEnabled: boolean;
   theme: 'light' | 'dark';
   defaultReminderMinutes: number;
+  autoClearFrequency: 'none' | 'daily' | 'weekly' | 'monthly';
 }
 
 export interface TaskContextType extends TaskState {
@@ -55,6 +56,7 @@ export interface TaskContextType extends TaskState {
   resetXP: () => void;
   setSoundEnabled: (enabled: boolean) => void;
   setDefaultReminderMinutes: (minutes: number) => void;
+  setAutoClearFrequency: (frequency: 'none' | 'daily' | 'weekly' | 'monthly') => void;
   playFocusSound: () => void;
   playSearchSound: () => void;
   toggleTheme: () => void;

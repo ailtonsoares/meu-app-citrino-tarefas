@@ -364,31 +364,7 @@ export default function TaskModal({ isOpen, onClose, onSubmit, taskToEdit, isGoo
                 </div>
               </div>
 
-              {/* Sync check toggle */}
-              <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/40 p-3.5">
-                <div className="space-y-0.5 pr-2">
-                  <h4 className="flex items-center gap-1.5 font-sans text-sm font-semibold text-slate-250">
-                    <Calendar className="h-4 w-4 text-amber-500" /> Sincronizar com Google Agenda
-                  </h4>
-                  <p className="text-xs text-slate-500">
-                    {isGoogleConnected 
-                      ? 'Espelhar automaticamente esta tarefa na sua conta do Google' 
-                      : 'Conecte seu Google Agenda na tela inicial para habilitar'}
-                  </p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={syncWithGoogle}
-                    disabled={!isGoogleConnected}
-                    onChange={(e) => setSyncWithGoogle(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className={`w-11 h-6 bg-slate-800 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-slate-350 after:border-gray-350 after:border after:rounded-full after:h-5 after:w-5 after:transition-all ${
-                    isGoogleConnected ? 'peer-checked:bg-amber-500 cursor-pointer' : 'opacity-40 cursor-not-allowed'
-                  }`}></div>
-                </label>
-              </div>
+              {/* Google integration is suspended for now to focus on local core essentials */}
 
               {/* Submit / Action buttons */}
               <div className="flex gap-3 pt-2">
