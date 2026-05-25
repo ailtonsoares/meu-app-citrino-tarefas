@@ -1103,6 +1103,7 @@ export function TaskProvider({ children }: { children: ReactNode }) {
       ...newTaskData,
       title: finalTitle,
       dueDate: finalDueDate,
+      reminderMinutes: newTaskData.reminderMinutes !== undefined ? newTaskData.reminderMinutes : defaultReminderMinutes,
       id,
       createdAt: now,
       updatedAt: now,

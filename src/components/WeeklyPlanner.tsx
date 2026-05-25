@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { motion } from 'motion/react';
 import { 
   Calendar, 
   Trash2, 
@@ -10,7 +11,9 @@ import {
   Circle, 
   CheckCircle2, 
   AlertCircle,
-  Move
+  Move,
+  Search,
+  X
 } from 'lucide-react';
 import { Task, TaskPriority } from '../types';
 
@@ -101,8 +104,51 @@ export default function WeeklyPlanner({
   // Filter tasks that belong to the active day
   const activeDayTasks = tasks.filter(task => task.dueDate === activeDateString);
 
+  // Repository filter state: 'pending' (unassigned), 'today' (scheduled for today), 'week' (scheduled for this week)
+  const [repoFilter, setRepoFilter] = useState<'pending' | 'today' | 'week'>('pending');
+
   // Filter tasks that have NO due date, or are pending and not assigned to this week, for the side repository
   const unassignedTasks = tasks.filter(task => !task.completed && (!task.dueDate || !weekDaysInfo.some(d => d.dateString === task.dueDate)));
+
+  // Base list of tasks for the repository based on selected filter
+  const baseRepositoryTasks = (() => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    switch (repoFilter) {
+      case 'today':
+        return tasks.filter(task => !task.completed && task.dueDate === todayStr);
+      case 'week':
+        return tasks.filter(task => !task.completed && task.dueDate && weekDaysInfo.some(d => d.dateString === task.dueDate));
+      case 'pending':
+      default:
+        return unassignedTasks;
+    }
+  })();
+
+  // Repository search state
+  const [repoSearchQuery, setRepoSearchQuery] = useState('');
+  
+  // Track which task's quick reminder dropdown is currently active
+  const [activeReminderDropdownId, setActiveReminderDropdownId] = useState<string | null>(null);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    const handleOutsideClick = () => {
+      setActiveReminderDropdownId(null);
+    };
+    window.addEventListener('click', handleOutsideClick);
+    return () => {
+      window.removeEventListener('click', handleOutsideClick);
+    };
+  }, []);
+
+  // Filter repository tasks based on search input
+  const filteredUnassignedTasks = baseRepositoryTasks.filter(task => {
+    const query = repoSearchQuery.trim().toLowerCase();
+    if (!query) return true;
+    return task.title.toLowerCase().includes(query) || 
+           (task.description && task.description.toLowerCase().includes(query)) ||
+           (task.category && task.category.toLowerCase().includes(query));
+  });
 
   const handleAddQuickTask = (e: React.FormEvent) => {
     e.preventDefault();
@@ -162,7 +208,7 @@ export default function WeeklyPlanner({
           <div className="flex items-center gap-2">
             <Calendar className="h-5 w-5 text-amber-500" />
             <h1 className="font-sans text-xl sm:text-2xl font-black text-white uppercase tracking-tight">
-              Planejador Semana
+              Planejador Semanal
             </h1>
             <span className="flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 font-mono text-[9px] font-black text-amber-400 uppercase tracking-widest border border-amber-500/10">
               <Sparkles className="h-2.5 w-2.5 animate-pulse" /> Off-line
@@ -171,6 +217,52 @@ export default function WeeklyPlanner({
           <p className="text-xs text-slate-400 max-w-2xl leading-relaxed">
             Organize sua rotina arrastando tarefas entre os dias. Planeje prazos e horários para receber alertas nativos diretamente em seu navegador sem precisar de internet.
           </p>
+        </div>
+
+        {/* Filtros rápidos do Repositório de Tarefas */}
+        <div className="flex bg-slate-950 border border-slate-850 p-1 rounded-xl text-xs gap-1 shrink-0 z-10 w-full md:w-auto">
+          <button
+            type="button"
+            onClick={() => {
+              setRepoFilter('today');
+              if (window.navigator && window.navigator.vibrate) window.navigator.vibrate(10);
+            }}
+            className={`flex-1 md:flex-initial flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wide transition-all cursor-pointer ${
+              repoFilter === 'today'
+                ? 'bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/10'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+            }`}
+          >
+            🗓️ Hoje
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setRepoFilter('week');
+              if (window.navigator && window.navigator.vibrate) window.navigator.vibrate(10);
+            }}
+            className={`flex-1 md:flex-initial flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wide transition-all cursor-pointer ${
+              repoFilter === 'week'
+                ? 'bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/10'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+            }`}
+          >
+            📅 Esta Semana
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setRepoFilter('pending');
+              if (window.navigator && window.navigator.vibrate) window.navigator.vibrate(10);
+            }}
+            className={`flex-1 md:flex-initial flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg font-bold text-[10px] uppercase tracking-wide transition-all cursor-pointer ${
+              repoFilter === 'pending'
+                ? 'bg-amber-500 text-slate-950 font-black shadow-lg shadow-amber-500/10'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+            }`}
+          >
+            📦 Pendentes
+          </button>
         </div>
       </div>
 
@@ -339,16 +431,19 @@ export default function WeeklyPlanner({
                     <div className="flex gap-3 items-start flex-1 min-w-0">
                       <div className="flex flex-col items-center gap-1.5 flex-shrink-0 relative">
                         <div className="relative group/tooltip">
-                          <button
+                          <motion.button
                             onClick={() => toggleTaskComplete(task.id)}
-                            className="mt-0.5 text-slate-500 hover:text-amber-500 transition-colors cursor-pointer flex-shrink-0"
+                            whileHover={{ scale: 1.15 }}
+                            whileTap={{ scale: 0.85 }}
+                            transition={{ type: 'spring', stiffness: 500, damping: 15 }}
+                            className="mt-0.5 text-slate-500 hover:text-amber-400 transition-colors duration-200 cursor-pointer flex-shrink-0 focus:outline-none"
                           >
                             {task.completed ? (
                               <CheckCircle2 className="h-5 w-5 text-amber-500" />
                             ) : (
-                              <Circle className="h-5 w-5 text-slate-600 hover:border-amber-500" />
+                              <Circle className="h-5 w-5 text-slate-600 hover:text-amber-500" />
                             )}
-                          </button>
+                          </motion.button>
 
                           {/* Hover Tooltip */}
                           <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 bg-slate-950 text-[10px] text-white font-sans font-bold rounded border border-slate-805 pointer-events-none opacity-0 group-hover/tooltip:opacity-100 transition-opacity duration-150 whitespace-nowrap shadow-xl z-20 transition-all scale-95 group-hover/tooltip:scale-100">
@@ -358,18 +453,44 @@ export default function WeeklyPlanner({
                         </div>
 
                         {/* Mini-menu dropdown to change reminder time quickly */}
-                        <div className="relative" title="Lembrete rápido">
-                          <select
-                            value={task.reminderMinutes !== undefined ? task.reminderMinutes : 15}
-                            onChange={(e) => updateTask(task.id, { reminderMinutes: Number(e.target.value) })}
-                            className="bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-[8px] text-slate-400 hover:text-amber-400 rounded px-1 py-0.5 focus:outline-none focus:border-amber-500 cursor-pointer font-mono font-bold transition-all w-11 mt-0.5"
+                        <div className="relative font-sans" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => setActiveReminderDropdownId(activeReminderDropdownId === task.id ? null : task.id)}
+                            className="flex items-center justify-center gap-1 bg-slate-900 hover:bg-amber-500 hover:text-slate-950 text-[9px] text-slate-400 font-bold px-1.5 py-0.5 rounded border border-slate-800 hover:border-amber-400 transition-all duration-150 cursor-pointer mt-1 whitespace-nowrap min-w-[36px]"
+                            title="Alterar minutos de lembrete"
                           >
-                            <option value={0}>0m</option>
-                            <option value={5}>5m</option>
-                            <option value={15}>15m</option>
-                            <option value={30}>30m</option>
-                            <option value={60}>60m</option>
-                          </select>
+                            <span>🔔 {(task.reminderMinutes !== undefined ? task.reminderMinutes : 15) === 0 ? 'Off' : `${task.reminderMinutes !== undefined ? task.reminderMinutes : 15}m`}</span>
+                            <span className="text-[7px] text-slate-500 group-hover:text-amber-950">▼</span>
+                          </button>
+
+                          {activeReminderDropdownId === task.id && (
+                            <div className="absolute left-0 mt-1 w-32 rounded-lg border border-slate-800 bg-slate-950 p-1 shadow-2xl z-30 flex flex-col gap-0.5 animate-in fade-in slide-in-from-top-1 duration-100">
+                              <p className="px-2 py-1 text-[8px] font-black uppercase tracking-wider text-slate-500 border-b border-slate-900 mb-1 leading-none">
+                                Lembrete antes
+                              </p>
+                              {[0, 5, 15, 30, 60].map((mins) => {
+                                const isSelected = (task.reminderMinutes !== undefined ? task.reminderMinutes : 15) === mins;
+                                return (
+                                  <button
+                                    key={mins}
+                                    type="button"
+                                    onClick={() => {
+                                      updateTask(task.id, { reminderMinutes: mins });
+                                      setActiveReminderDropdownId(null);
+                                    }}
+                                    className={`w-full text-left font-semibold text-[10px] px-2 py-1 rounded-md transition-all cursor-pointer ${
+                                      isSelected
+                                        ? 'bg-amber-500 text-slate-950 font-black'
+                                        : 'text-slate-400 hover:text-amber-400 hover:bg-slate-900'
+                                    }`}
+                                  >
+                                    {mins === 0 ? '❌ Desativado' : `${mins} min antes`}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -494,24 +615,56 @@ export default function WeeklyPlanner({
             onDrop={handleDropToUnassigned}
           >
             <div>
-              <h3 className="font-sans text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
-                📦 Repositório de Tarefas Pendentes
+              <h3 className="font-sans text-xs font-black text-white uppercase tracking-wider flex items-center justify-between gap-1.5">
+                <span className="flex items-center gap-1.5">📦 Repositório de Tarefas Pendentes</span>
+                <span className="text-[8px] font-black px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 uppercase tracking-widest border border-amber-500/10">
+                  {repoFilter === 'today' ? 'Hoje' : repoFilter === 'week' ? 'Esta Semana' : 'Pendentes'}
+                </span>
               </h3>
-              <p className="text-[11px] text-slate-500 leading-normal mt-1">
-                Todas as tarefas pendentes sem prazo estipulado. Arraste-as para os dias ou clique em ➕ para agendá-las hoje.
+              <p className="text-[11px] text-slate-500 leading-normal mt-1 font-sans">
+                {repoFilter === 'today' 
+                  ? 'Exibindo tarefas agendadas para hoje que ainda não foram concluídas.' 
+                  : repoFilter === 'week' 
+                  ? 'Exibindo tarefas agendadas para esta semana que ainda não foram concluídas.' 
+                  : 'Todas as tarefas pendentes sem prazo estipulado. Arraste-as para os dias ou clique para agendar.'}
               </p>
             </div>
 
+            {/* Campo de busca do repositório */}
+            <div className="relative">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                <Search className="h-3.5 w-3.5 text-slate-500" />
+              </span>
+              <input
+                type="text"
+                value={repoSearchQuery}
+                onChange={(e) => setRepoSearchQuery(e.target.value)}
+                placeholder="Buscar tarefa no repositório..."
+                className="w-full text-xs pl-8.5 pr-8 py-2 border border-slate-800 bg-slate-950 rounded-xl text-slate-250 placeholder-slate-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/20 transition-all font-sans"
+              />
+              {repoSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setRepoSearchQuery('')}
+                  className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-slate-400 hover:text-slate-200 cursor-pointer"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
             <div className="space-y-2 max-h-[500px] overflow-y-auto scrollbar-thin pr-1">
-              {unassignedTasks.length === 0 ? (
+              {filteredUnassignedTasks.length === 0 ? (
                 <div className="text-center py-10 border border-dashed border-slate-800/80 rounded-xl bg-slate-900/10">
                   <AlertCircle className="h-5 w-5 text-slate-600 mx-auto mb-2" />
-                  <p className="text-[10px] text-slate-500 leading-normal max-w-[200px] mx-auto">
-                    Nenhuma tarefa sem data. Crie no painel de controle principal ou organize suas prioridades.
+                  <p className="text-[10px] text-slate-550 leading-normal max-w-[200px] mx-auto font-sans">
+                    {baseRepositoryTasks.length === 0
+                      ? `Nenhuma tarefa pendente com o filtro "${repoFilter === 'today' ? 'Hoje' : repoFilter === 'week' ? 'Esta Semana' : 'Pendentes'}".`
+                      : "Nenhuma tarefa encontrada para a busca atual neste repositório."}
                   </p>
                 </div>
               ) : (
-                unassignedTasks.map((task) => (
+                filteredUnassignedTasks.map((task) => (
                   <div
                     key={task.id}
                     draggable

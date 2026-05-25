@@ -6,6 +6,7 @@ import { SyncQueueDB } from './lib/syncQueueDb';
 import TaskModal from './components/TaskModal';
 import PomodoroTimer from './components/PomodoroTimer';
 import WeeklyPlanner from './components/WeeklyPlanner';
+import GratitudeJournal from './components/GratitudeJournal';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -42,7 +43,9 @@ import {
   CloudUpload,
   CloudDownload,
   Bell,
-  Star
+  Star,
+  Settings,
+  Heart
 } from 'lucide-react';
 
 function DashboardContent() {
@@ -103,10 +106,26 @@ function DashboardContent() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [taskToEdit, setTaskToEdit] = useState<Task | null>(null);
   const [viewMode, setViewMode] = useState<'app' | 'semana'>('app'); // Switch between working web app & weekly scheduler
+  const [isGratitudeOpen, setIsGratitudeOpen] = useState(false);
   const [driveStatus, setDriveStatus] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [activeReminderPopoverTaskId, setActiveReminderPopoverTaskId] = useState<string | null>(null);
   const [subView, setSubView] = useState<'board' | 'list'>('list');
   const [showStats, setShowStats] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // Close settings dropdown on click outside
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('#global-settings-dropdown')) {
+        setIsSettingsOpen(false);
+      }
+    };
+    window.addEventListener('click', handleOutsideClick);
+    return () => {
+      window.removeEventListener('click', handleOutsideClick);
+    };
+  }, []);
 
   // Daily Reset & Ritual states
   const [isOpeningRitualVisible, setIsOpeningRitualVisible] = useState(() => {
@@ -870,7 +889,7 @@ function DashboardContent() {
             </div>
 
             {/* 7 Days Grid Board */}
-            <div className="grid grid-cols-1 md:grid-cols-7 gap-3 pb-2 overflow-x-auto">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-3 pb-2 overflow-x-auto">
               {weekDays.map(day => {
                 const dayTasks = tasks.filter(t => t.dueDate === day.dateStr && !t.completed);
                 
@@ -925,8 +944,8 @@ function DashboardContent() {
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-amber-500 selection:text-slate-950">
       
       {/* Dynamic Background Aura Effects */}
-      <div className="fixed top-0 left-1/4 -z-10 h-96 w-96 rounded-full bg-amber-500/5 blur-[120px] pointer-events-none" />
-      <div className="fixed bottom-10 right-1/4 -z-10 h-96 w-96 rounded-full bg-indigo-505/5 blur-[120px] pointer-events-none" />
+      <div className="hidden md:block fixed top-0 left-1/4 -z-10 h-96 w-96 rounded-full bg-amber-500/5 blur-[120px] pointer-events-none" />
+      <div className="hidden md:block fixed bottom-10 right-1/4 -z-10 h-96 w-96 rounded-full bg-indigo-505/5 blur-[120px] pointer-events-none" />
 
       {/* Header Bar */}
       <header className="sticky top-0 z-40 border-b border-slate-900 bg-slate-950/85 backdrop-blur-md py-1.5 sm:py-0">
@@ -947,6 +966,21 @@ function DashboardContent() {
 
           {/* Sprints vs Dashboard Mode Controls */}
           <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-2.5">
+            {/* Gratidão (Gratitude Journal) Button */}
+            <button
+              onClick={() => {
+                setIsGratitudeOpen(true);
+                if (soundEnabled) {
+                  try { playFocusSound(); } catch (err) {}
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer bg-gradient-to-r from-rose-500/10 to-amber-500/10 border-rose-500/20 text-rose-400 hover:from-rose-500/20 hover:to-amber-500/20 hover:text-rose-300 hover:scale-[1.03] shadow-md shadow-rose-500/5"
+              title="Abrir Diário de Gratidão e Considerações do Dia"
+            >
+              <Heart className="h-3.5 w-3.5 text-rose-500 fill-rose-500/40 animate-[pulse_3s_infinite]" />
+              <span>Gratidão</span>
+            </button>
+
             {/* Statistics & Progress Toggle */}
             <button
               onClick={() => {
@@ -1006,6 +1040,69 @@ function DashboardContent() {
               )}
             </button>
 
+            {/* Configurações (Settings) Dropdown */}
+            <div className="relative" id="global-settings-dropdown">
+              <button
+                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                  isSettingsOpen
+                    ? 'bg-slate-800 border-amber-500/50 text-amber-500'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-850 hover:text-slate-200 hover:border-slate-700'
+                }`}
+                title="Configurações Gerais"
+              >
+                <Settings className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Ajustes</span>
+              </button>
+
+              {isSettingsOpen && (
+                <div 
+                  className="absolute right-0 mt-2 w-64 rounded-xl border border-slate-800 bg-slate-950 p-4 shadow-2xl z-50 flex flex-col gap-3 font-sans"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="border-b border-slate-900 pb-2 mb-1 flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Configurações Gerais</span>
+                    <button
+                      onClick={() => setIsSettingsOpen(false)}
+                      className="text-slate-600 hover:text-slate-400 text-xs font-bold cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  {/* New Default Reminder minutes Setting option */}
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      <Bell className="h-3 w-3 text-amber-500" />
+                      Lembrete Padrão
+                    </label>
+                    <select
+                      value={defaultReminderMinutes}
+                      onChange={(e) => {
+                        setDefaultReminderMinutes(Number(e.target.value));
+                        if (soundEnabled) {
+                          try {
+                            // play tick sound if context is available
+                            playFocusSound();
+                          } catch (err) {}
+                        }
+                      }}
+                      className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 font-sans text-xs text-slate-300 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500/20 cursor-pointer"
+                    >
+                      <option value={0}>Sem lembrete</option>
+                      <option value={5}>5 minutos antes</option>
+                      <option value={15}>15 minutos antes</option>
+                      <option value={30}>30 minutos antes</option>
+                      <option value={60}>60 minutos (1 hora) antes</option>
+                    </select>
+                    <p className="text-[9px] text-slate-500 leading-relaxed font-mono">
+                      Tempo padrão de antecedência para novas metas.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-xs">
               <button
                 onClick={() => setViewMode('app')}
@@ -1034,11 +1131,11 @@ function DashboardContent() {
 
       {/* Simulated Offline Active Alert Banner */}
       {isOfflineSimulated && (
-        <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 sm:px-6">
-          <div className="mx-auto max-w-7xl flex items-center justify-between text-xs font-semibold text-amber-400">
+        <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2.5 sm:px-6">
+          <div className="mx-auto max-w-7xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-semibold text-amber-400">
             <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-amber-500 animate-ping" />
-              <span>Conexão Simulada Desconectada: Alterações salvas localmente e agendadas na fila de sincronização.</span>
+              <span className="h-2 w-2 rounded-full bg-amber-500 animate-ping flex-shrink-0" />
+              <span className="leading-snug">Conexão Simulada Desconectada: Alterações salvas localmente e agendadas na fila de sincronização.</span>
             </div>
             <button
               onClick={() => setIsOfflineSimulated(false)}
@@ -1187,7 +1284,7 @@ function DashboardContent() {
             </div>
 
             {/* Recharts Container */}
-            <div id="recharts-activity-container" className="h-44 w-full bg-slate-900/30 rounded-xl border border-slate-800/80 p-2 sm:p-4">
+            <div id="recharts-activity-container" className="h-44 w-full bg-slate-900/30 rounded-xl border border-slate-800/80 p-2 sm:p-4 overflow-hidden max-w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart
                   data={chartData}
@@ -1926,7 +2023,7 @@ function DashboardContent() {
 
 
               {/* Tips banner card */}
-              <div className="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/80 to-slate-950 p-6">
+              <div className="hidden md:block rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/80 to-slate-950 p-6">
                 <h4 className="flex items-center gap-1.5 font-sans font-bold text-slate-200">
                   <Zap className="h-4 w-4 text-emerald-400" /> Benefícios do Portfólio de Código
                 </h4>
@@ -1961,6 +2058,14 @@ function DashboardContent() {
         defaultReminderMinutes={defaultReminderMinutes}
       />
 
+      {/* Gratitude Journal Overlays */}
+      <GratitudeJournal
+        isOpen={isGratitudeOpen}
+        onClose={() => setIsGratitudeOpen(false)}
+        soundEnabled={soundEnabled}
+        playFocusSound={playFocusSound}
+      />
+
       {/* RITUAL DE ABERTURA DIÁRIO (DAILY RESET IMPERSIVE PORTAL) */}
       <AnimatePresence>
         {isOpeningRitualVisible && (
@@ -1968,11 +2073,11 @@ function DashboardContent() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/98 backdrop-blur-lg flex items-center justify-center p-4 sm:p-6"
+            className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/98 backdrop-blur-lg flex items-start md:items-center justify-center p-4 sm:p-6 py-6 sm:py-12"
           >
             {/* Ambient gold glow */}
-            <div className="fixed -top-10 -left-10 h-96 w-96 rounded-full bg-amber-500/10 blur-[130px] pointer-events-none" />
-            <div className="fixed -bottom-10 -right-10 h-96 w-96 rounded-full bg-indigo-505/10 blur-[130px] pointer-events-none" />
+            <div className="hidden md:block fixed -top-10 -left-10 h-96 w-96 rounded-full bg-amber-500/10 blur-[130px] pointer-events-none" />
+            <div className="hidden md:block fixed -bottom-10 -right-10 h-96 w-96 rounded-full bg-indigo-505/10 blur-[130px] pointer-events-none" />
 
             <motion.div
               initial={{ scale: 0.95, y: 15 }}
@@ -2026,7 +2131,7 @@ function DashboardContent() {
                   </p>
                 </div>
 
-                <div className="bg-slate-950/40 p-3 rounded-xl border border-slate-850/60 font-mono text-[9px] text-slate-500 leading-normal flex items-start gap-1.5">
+                <div className="hidden md:flex bg-slate-950/40 p-3 rounded-xl border border-slate-850/60 font-mono text-[9px] text-slate-550 leading-normal items-start gap-1.5">
                   <span className="text-amber-500">💡</span>
                   <span>O cérebro trabalha melhor focando em progresso contínuo de 3 metas principais por dia do que em infinitos checkboxes vazios.</span>
                 </div>
