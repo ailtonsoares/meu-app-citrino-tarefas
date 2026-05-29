@@ -1,2399 +1,1580 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { TaskProvider, useTasks } from './context/TaskContext';
-import { Task, TaskPriority } from './types';
-import { SyncQueueDB } from './lib/syncQueueDb';
-import TaskModal from './components/TaskModal';
-import PomodoroTimer from './components/PomodoroTimer';
-import WeeklyPlanner from './components/WeeklyPlanner';
-import GratitudeJournal from './components/GratitudeJournal';
-import {
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip
-} from 'recharts';
+import confetti from 'canvas-confetti';
 import {
   Plus,
   Search,
-  CheckCircle,
-  CloudLightning,
-  RefreshCw,
-  Trash2,
-  Edit3,
-  Flame,
-  FileCode,
-  Sparkles,
-  Trophy,
-  Filter,
-  Layers,
   CheckCircle2,
   Calendar,
   Zap,
   RotateCcw,
-  Volume2,
-  VolumeX,
   Sun,
   Moon,
-  Download,
-  HardDrive,
-  CloudUpload,
-  CloudDownload,
-  Bell,
-  Star,
   Settings,
-  Heart
+  Menu,
+  Clock,
+  Check,
+  Trash2,
+  Edit3,
+  AlertCircle,
+  ArrowRight,
+  Droplet,
+  BookOpen,
+  TrendingUp,
+  User,
+  X,
+  PlusCircle,
+  MoreVertical,
+  ChevronDown,
+  ChevronUp,
+  Filter
 } from 'lucide-react';
 
-function DashboardContent() {
-  const {
-    tasks,
-    loading,
-    isSyncing,
-    xp,
-    level,
-    filter,
-    categoryFilter,
-    searchQuery,
-    soundEnabled,
-    theme,
-    defaultReminderMinutes,
-    setDefaultReminderMinutes,
-    autoClearFrequency,
-    setAutoClearFrequency,
-    addTask,
-    updateTask,
-    deleteTask,
-    toggleTaskComplete,
-    setFilter,
-    setCategoryFilter,
-    setSearchQuery,
-    triggerOfflineSync,
-    addPomodoroSession,
-    resetXP,
-    setSoundEnabled,
-    playFocusSound,
-    playSearchSound,
-    toggleTheme,
-    clearCompletedTasks,
+// Core Type Declarations
+export type TaskPriority = 'low' | 'medium' | 'high';
+export type TaskCategory = 'Trabalho' | 'Estudo' | 'Pessoal' | 'Saúde' | 'Geral';
+export type DayOfWeek = 'Segunda' | 'Terça' | 'Quarta' | 'Quinta' | 'Sexta' | 'Sábado' | 'Domingo';
 
-    // Google integration
-    googleUser,
-    isGoogleConnected,
-    isGoogleSyncing,
-    connectGoogle,
-    disconnectGoogle,
-    syncAllTasksToGoogle,
-    syncTaskToGoogle,
+export interface SubTask {
+  id: string;
+  title: string;
+  completed: boolean;
+}
 
-    // Offline & simulation sync queue helpers
-    isOfflineSimulated,
-    setIsOfflineSimulated,
-    syncQueue,
-    processSyncQueue,
+export interface Task {
+  id: string;
+  title: string;
+  description?: string;
+  completed: boolean;
+  priority: TaskPriority;
+  category: TaskCategory;
+  dayOfWeek?: DayOfWeek; // For Weekly Planner integration
+  subtasks: SubTask[];
+  createdAt: string; // ISO format
+}
 
-    // Google Drive integration
-    isGoogleDriveOperating,
-    backupToGoogleDrive,
-    restoreFromGoogleDrive,
-    exportCSVToGoogleDrive,
-  } = useTasks();
+// Initial/Demo tasks to start the user off with a functional preview
+const INITIAL_TASKS: Task[] = [
+  {
+    id: 'demo-1',
+    title: 'Compreender sincronização de estados no React',
+    description: 'Revisar useEffect e useMemo para evitar re-renders desnecessários.',
+    completed: false,
+    priority: 'high',
+    category: 'Estudo',
+    dayOfWeek: 'Segunda',
+    subtasks: [
+      { id: 'sub-1', title: 'Estudar arrays de dependências', completed: true },
+      { id: 'sub-2', title: 'Escrever exemplo prático simples', completed: false }
+    ],
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'demo-2',
+    title: 'Organizar repositório local e backups',
+    description: 'Fazer o commit inicial do projeto Citrino.',
+    completed: true,
+    priority: 'medium',
+    category: 'Trabalho',
+    dayOfWeek: 'Terça',
+    subtasks: [],
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'demo-3',
+    title: 'Preparar refeição saudável semanal',
+    description: 'Planejar cardápio equilibrado focado em macros.',
+    completed: false,
+    priority: 'low',
+    category: 'Saúde',
+    dayOfWeek: 'Quarta',
+    subtasks: [
+      { id: 'sub-3', title: 'Comprar vegetais frescos', completed: false },
+      { id: 'sub-4', title: 'Cozinhar porções prontas para 3 dias', completed: false }
+    ],
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: 'demo-4',
+    title: 'Revisar metas da sprint quinzenal',
+    description: 'Check-point com a equipe de engenharia Citrino.',
+    completed: false,
+    priority: 'high',
+    category: 'Trabalho',
+    dayOfWeek: 'Quinta',
+    subtasks: [],
+    createdAt: new Date().toISOString()
+  }
+];
 
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+export default function App() {
+  // Primary Navigation Tab state
+  const [viewMode, setViewMode] = useState<'tarefas' | 'agenda' | 'progresso' | 'configuracoes'>('tarefas');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [selectedAgendaDay, setSelectedAgendaDay] = useState<DayOfWeek>(() => {
+    const days: DayOfWeek[] = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+    const idx = new Date().getDay();
+    const name = days[idx];
+    return name === 'Domingo' ? 'Domingo' : name; // Fallback or direct map
+  });
+
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    return (localStorage.getItem('citrino_theme') || 'dark') as 'light' | 'dark';
+  });
+
+  // Apply theme class to document root for responsive transition styles
+  useEffect(() => {
+    localStorage.setItem('citrino_theme', theme);
+    const root = window.document.documentElement;
+    if (theme === 'light') {
+      root.classList.add('light');
+    } else {
+      root.classList.remove('light');
+    }
+  }, [theme]);
+
+  // Core Data State
+  const [tasks, setTasks] = useState<Task[]>(() => {
+    const saved = localStorage.getItem('citrino_tasks_slate');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Error loading tasks from localStorage', e);
+      }
+    }
+    return INITIAL_TASKS;
+  });
+
+  // Gamification (XP / Level) State
+  const [xp, setXp] = useState<number>(() => {
+    const saved = localStorage.getItem('citrino_xp_slate');
+    return saved ? parseInt(saved, 10) : 120;
+  });
+
+  // Hydration state (water count + timer)
+  const [waterCups, setWaterCups] = useState<number>(() => {
+    const saved = localStorage.getItem('citrino_water_cups');
+    return saved ? parseInt(saved, 10) : 0;
+  });
+  const [lastWaterTimestamp, setLastWaterTimestamp] = useState<string>(() => {
+    const saved = localStorage.getItem('citrino_last_water_time');
+    return saved || new Date().toISOString();
+  });
+  const [secondsSinceWater, setSecondsSinceWater] = useState<number>(0);
+
+  // Filtering / Search State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | TaskCategory>('all');
+  const [priorityFilter, setPriorityFilter] = useState<'all' | TaskPriority>('all');
+  const [showCompleted, setShowCompleted] = useState<boolean>(true);
+
+  // Interactive Task Modals & Forms State
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [taskToEdit, setTaskToEdit] = useState<Task | null>(null);
-  const [viewMode, setViewMode] = useState<'app' | 'semana'>('app'); // Switch between working web app & weekly scheduler
-  const [isGratitudeOpen, setIsGratitudeOpen] = useState(false);
-  const [driveStatus, setDriveStatus] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
-  const [activeReminderPopoverTaskId, setActiveReminderPopoverTaskId] = useState<string | null>(null);
-  const [subView, setSubView] = useState<'board' | 'list'>('list');
-  const [showStats, setShowStats] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  
+  // Create / Edit Form Temporary States
+  const [formTitle, setFormTitle] = useState('');
+  const [formDescription, setFormDescription] = useState('');
+  const [formPriority, setFormPriority] = useState<TaskPriority>('medium');
+  const [formCategory, setFormCategory] = useState<TaskCategory>('Geral');
+  const [formDayOfWeek, setFormDayOfWeek] = useState<DayOfWeek | 'none'>('none');
+  const [formSubtasks, setFormSubtasks] = useState<{ id: string; title: string; completed: boolean }[]>([]);
+  const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
 
-  // Close settings dropdown on click outside
+  // Save to LocalStorage whenever tasks modify
   useEffect(() => {
-    const handleOutsideClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest('#global-settings-dropdown')) {
-        setIsSettingsOpen(false);
-      }
+    localStorage.setItem('citrino_tasks_slate', JSON.stringify(tasks));
+  }, [tasks]);
+
+  // Save XP
+  useEffect(() => {
+    localStorage.setItem('citrino_xp_slate', xp.toString());
+  }, [xp]);
+
+  // Keep track of water hydration time elapsed (calculates 2 hours indicator)
+  useEffect(() => {
+    localStorage.setItem('citrino_water_cups', waterCups.toString());
+    localStorage.setItem('citrino_last_water_time', lastWaterTimestamp);
+  }, [waterCups, lastWaterTimestamp]);
+
+  useEffect(() => {
+    const calculateElapsed = () => {
+      const diffMs = Date.now() - new Date(lastWaterTimestamp).getTime();
+      setSecondsSinceWater(Math.floor(diffMs / 1000));
     };
-    window.addEventListener('click', handleOutsideClick);
-    return () => {
-      window.removeEventListener('click', handleOutsideClick);
-    };
-  }, []);
-
-  // Daily Reset & Ritual states
-  const [isOpeningRitualVisible, setIsOpeningRitualVisible] = useState(() => {
-    const lastDate = localStorage.getItem('citrino_last_ritual_date');
-    const todayStr = new Date().toLocaleDateString();
-    return lastDate !== todayStr;
-  });
-  const [priorityLimitWarning, setPriorityLimitWarning] = useState<string | null>(null);
-
-  // Breathing loop state inside Ritual
-  const [breathingPhase, setBreathingPhase] = useState<'inspire' | 'segure' | 'expire'>('inspire');
-  const [breathingSecondsLeft, setBreathingSecondsLeft] = useState(4);
-
-  // Quick inputs in Ritual board
-  const [ritualNewTaskTitle, setRitualNewTaskTitle] = useState('');
-  const [ritualNewTaskCategory, setRitualNewTaskCategory] = useState('Estudo');
-  const [ritualNewTaskPriority, setRitualNewTaskPriority] = useState<TaskPriority>('medium');
-
-  // 100% Celebration states
-  const [showSuccessCelebration, setShowSuccessCelebration] = useState(false);
-  const [hasCelebratedToday, setHasCelebratedToday] = useState(false);
-
-  // Reactive verification for 100% completion of selected Daily Priorities
-  const dayPriorityTasks = tasks.filter(t => t.isPriorityDay);
-  const totalPrioritiesCount = dayPriorityTasks.length;
-  const completedPrioritiesCount = dayPriorityTasks.filter(t => t.completed).length;
-
-  useEffect(() => {
-    if (totalPrioritiesCount > 0 && completedPrioritiesCount === totalPrioritiesCount) {
-      if (!hasCelebratedToday) {
-        setShowSuccessCelebration(true);
-        setHasCelebratedToday(true);
-        // Dispatch elegant success confetti stream
-        setTimeout(() => {
-          try {
-            (window as any).confetti?.({
-              particleCount: 120,
-              spread: 80,
-              origin: { y: 0.4 },
-              colors: ['#f59e0b', '#3b82f6', '#10b981', '#ffffff', '#ec4899', '#38bdf8']
-            });
-          } catch (e) {
-            console.warn('Success animation confetti trigger error:', e);
-          }
-        }, 150);
-      }
-    } else if (completedPrioritiesCount < totalPrioritiesCount) {
-      // Reset flag if items are untoggled
-      setHasCelebratedToday(false);
-    }
-  }, [completedPrioritiesCount, totalPrioritiesCount, hasCelebratedToday]);
-
-  // Interactive guide for calming breathing during Ritual
-  useEffect(() => {
-    if (!isOpeningRitualVisible) return;
-
-    const interval = setInterval(() => {
-      setBreathingSecondsLeft((prev) => {
-        if (prev <= 1) {
-          setBreathingPhase((phase) => {
-            if (phase === 'inspire') return 'segure';
-            if (phase === 'segure') return 'expire';
-            return 'inspire';
-          });
-          return 4;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
+    calculateElapsed();
+    const interval = setInterval(calculateElapsed, 1000);
     return () => clearInterval(interval);
-  }, [isOpeningRitualVisible, breathingPhase]);
+  }, [lastWaterTimestamp]);
 
-  // Helper to handle and regulate the star toggle for top 3 focal items
-  const handleTogglePriorityDay = (task: Task, e: React.MouseEvent) => {
-    e.stopPropagation();
-    
-    if (!task.isPriorityDay) {
-      // User is checking ON. Verify 3 cap limit!
-      const activePriorityCount = tasks.filter(t => t.isPriorityDay && !t.completed).length;
-      if (activePriorityCount >= 3) {
-        setPriorityLimitWarning('Foco absoluto: escolha no máximo 3 tarefas para seu Top Diário para reduzir sobrecarga de dados!');
-        setTimeout(() => setPriorityLimitWarning(null), 5000);
-        return;
-      }
-    }
+  // 2-hour hydration rule helper (7200 seconds)
+  const isHydrationOverdue = secondsSinceWater >= 7200;
 
-    updateTask(task.id, { isPriorityDay: !task.isPriorityDay });
-    if (soundEnabled) {
-      playHoverTickSound();
-    }
-  };
+  // Level calculator (100 XP per level)
+  const level = Math.floor(xp / 100) + 1;
+  const xpInCurrentLevel = xp % 100;
 
-  // Helper to quick-add tasks directly from the Daily Opening Ritual panel
-  const handleCreateQuickTaskInRitual = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!ritualNewTaskTitle.trim()) return;
-
-    // Determine if we can automatically mark it as a priority day focus
-    const activePriorityCount = tasks.filter(t => t.isPriorityDay && !t.completed).length;
-    const shouldMarkAsPriority = activePriorityCount < 3;
-
-    addTask({
-      title: ritualNewTaskTitle,
-      dueDate: new Date().toISOString().split('T')[0],
-      dueTime: '08:00',
-      priority: ritualNewTaskPriority,
-      category: ritualNewTaskCategory,
-      pomodorosTarget: 1,
-      recurrence: 'none',
-      syncWithGoogle: false,
-      isPriorityDay: shouldMarkAsPriority,
-      subtasks: []
-    });
-
-    setRitualNewTaskTitle('');
-    if (soundEnabled) {
-      playHoverTickSound();
-    }
-  };
-
-  const isCurrentlyOffline = !navigator.onLine || isOfflineSimulated;
-
-  // HTML5 Drag and Drop event handlers
-  const handleDragStart = (e: React.DragEvent, taskId: string) => {
-    e.dataTransfer.setData('text/plain', taskId);
-    e.dataTransfer.effectAllowed = 'move';
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
-
-  const handleDropOnDay = (e: React.DragEvent, dateStr: string) => {
-    e.preventDefault();
-    const taskId = e.dataTransfer.getData('text/plain');
-    if (taskId) {
-      updateTask(taskId, { dueDate: dateStr });
-      if (soundEnabled) {
-        playFocusSound();
-      }
-    }
-  };
-
-  const handleDropOnInbox = (e: React.DragEvent) => {
-    e.preventDefault();
-    const taskId = e.dataTransfer.getData('text/plain');
-    if (taskId) {
-      updateTask(taskId, { dueDate: '' }); // Clear due date to deposit in Ideas Box
-      if (soundEnabled) {
-        playFocusSound();
-      }
-    }
-  };
-
-  // 7 Days Weekly Planner calculator
-  const getWeekDays = () => {
-    const days = [];
-    const today = new Date();
-    
-    // Calculate Monday of the current week
-    const monday = new Date(today);
-    const dayOfWeek = today.getDay();
-    const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    monday.setDate(today.getDate() + diff);
-
-    const daysOfWeek = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
-    const fullDaysOfWeek = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'];
-
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
-      const dateStr = d.toISOString().split('T')[0];
-      const isToday = d.toDateString() === today.toDateString();
-      days.push({
-        name: daysOfWeek[i],
-        fullName: fullDaysOfWeek[i],
-        dateStr,
-        isToday,
-        dayOfMonth: d.getDate()
-      });
-    }
-    return days;
-  };
-
-  // Static Task Templates for zero-cost enxuto MVP workflow
-  const TASK_TEMPLATES = [
-    {
-      id: 'tpl-estudo',
-      name: 'Foco nos Estudos',
-      icon: '🚀',
-      category: 'Estudo',
-      description: 'Estruturação completa de estudo de React e TypeScript (com checklists prontos)',
-      tasks: [
-        {
-          title: 'Dominar Core de React e Hooks Avançados',
-          description: 'Aprofundamento em ciclos de render e hooks de controle de referência.',
-          priority: 'high',
-          category: 'Estudo',
-          pomodorosTarget: 3,
-          subtasks: [
-            { id: 'sub-react-1', title: 'Compreender sincronização segura com useEffect', completed: false },
-            { id: 'sub-react-2', title: 'Otimizar renderings usando useMemo e useCallback', completed: false },
-            { id: 'sub-react-3', title: 'Construir Contextos Globais de Estado escaláveis', completed: false }
-          ]
-        },
-        {
-          title: 'Aprofundar em TypeScript & Generics',
-          description: 'Criação de utilitários flexíveis e fortes tipagens.',
-          priority: 'medium',
-          category: 'Estudo',
-          pomodorosTarget: 2,
-          subtasks: [
-            { id: 'sub-ts-1', title: 'Construir generic key-value store para SQLite local', completed: false },
-            { id: 'sub-ts-2', title: 'Implementar guards e asserções customizadas de tipo', completed: false }
-          ]
-        }
-      ]
-    },
-    {
-      id: 'tpl-mensal',
-      name: 'Organização Mensal',
-      icon: '📅',
-      category: 'Finanças',
-      description: 'Checklist completo para organizar o planejamento e finanças do MVP',
-      tasks: [
-        {
-          title: 'Planejamento Financeiro e Contas',
-          description: 'Revisão de faturamentos, pagamentos de serviços na nuvem e boletos.',
-          priority: 'high',
-          category: 'Finanças',
-          pomodorosTarget: 2,
-          subtasks: [
-            { id: 'sub-fin-1', title: 'Auditar faturamentos de APIs e Cloud Run', completed: false },
-            { id: 'sub-fin-2', title: 'Quitar boletos recorrentes do setup de dev', completed: false },
-            { id: 'sub-fin-3', title: 'Definir teto de gastos do mês para ferramentas de IA', completed: false }
-          ]
-        },
-        {
-          title: 'Retrospectiva e OKRs Mensais',
-          description: 'Analise o progresso de metas e recalibre prioridades.',
-          priority: 'medium',
-          category: 'Trabalho',
-          pomodorosTarget: 1,
-          subtasks: [
-            { id: 'sub-okr-1', title: 'Analisar churn e retenção do MVP', completed: false },
-            { id: 'sub-okr-2', title: 'Refinar 3 metas principais da próxima sprint de valor', completed: false }
-          ]
-        }
-      ]
-    },
-    {
-      id: 'tpl-sprint',
-      name: 'Validação Sprint de MVP',
-      icon: '⚡',
-      category: 'Trabalho',
-      description: 'Rotina completa de validação e estabilização de deployments antes de release',
-      tasks: [
-        {
-          title: 'Validação de Features Offline-First',
-          description: 'Garantir que a sincronização automática e resiliência funcionem corretas.',
-          priority: 'high',
-          category: 'Trabalho',
-          pomodorosTarget: 2,
-          subtasks: [
-            { id: 'sub-qa-1', title: 'Simular oscilação de internet gravando 3 alterações', completed: false },
-            { id: 'sub-qa-2', title: 'Verificar consolidação (debounce + upsert) na tabela SyncQueue', completed: false },
-            { id: 'sub-qa-3', title: 'Confirmar reconexão e dreno elegante em segundo plano', completed: false }
-          ]
-        }
-      ]
-    }
-  ];
-
-  const handleImportTemplate = (tpl: any) => {
-    tpl.tasks.forEach((t: any) => {
-      // Create fresh randomized subtask IDs to allow clean separate toggling
-      const preparedSubtasks = (t.subtasks || []).map((sub: any) => ({
-        id: `sub_${Math.random().toString(36).substring(2, 9)}`,
-        title: sub.title,
-        completed: sub.completed
-      }));
-
-      addTask({
-        title: t.title,
-        description: t.description,
-        dueDate: '', // Loaded automatically into Caixa de Entrada / Gaveta, as requested!
-        dueTime: '12:00',
-        priority: t.priority,
-        category: t.category,
-        pomodorosTarget: t.pomodorosTarget,
-        recurrence: 'none',
-        syncWithGoogle: false,
-        subtasks: preparedSubtasks
-      });
-    });
-    
-    if (soundEnabled) {
-      playFocusSound();
-    }
-  };
-
-  useEffect(() => {
-    const handleGlobalClick = () => {
-      setActiveReminderPopoverTaskId(null);
-    };
-    window.addEventListener('click', handleGlobalClick);
-    return () => {
-      window.removeEventListener('click', handleGlobalClick);
-    };
-  }, []);
-
-  const playHoverTickSound = () => {
-    if (!soundEnabled) return;
+  // Sound effects fallback
+  const playSound = (type: 'check' | 'level' | 'click') => {
     try {
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioContextClass) return;
-      
-      const ctx = new AudioContextClass();
-      const now = ctx.currentTime;
-      
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(1900, now);
-      osc.frequency.exponentialRampToValueAtTime(1300, now + 0.015);
-      
-      gain.gain.setValueAtTime(0.001, now);
-      gain.gain.linearRampToValueAtTime(0.025, now + 0.002);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.015);
-      
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
       osc.connect(gain);
-      gain.connect(ctx.destination);
-      
-      osc.start(now);
-      osc.stop(now + 0.02);
-    } catch (err) {
-      // quiet fail
+      gain.connect(audioCtx.destination);
+
+      if (type === 'check') {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(320, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(640, audioCtx.currentTime + 0.15);
+        gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.18);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.18);
+      } else if (type === 'level') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+        osc.frequency.exponentialRampToValueAtTime(1320, audioCtx.currentTime + 0.25);
+        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.35);
+      } else {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(500, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.06);
+      }
+    } catch (e) {
+      // AudioContext blocker fallback
     }
   };
 
-  const handleOpenCreateModal = () => {
+  // Toggle tasks completion & handle XP accumulation
+  const handleToggleTask = (id: string) => {
+    playSound('check');
+    const updated = tasks.map(t => {
+      if (t.id === id) {
+        const nextCompleted = !t.completed;
+        // Adjust XP
+        if (nextCompleted) {
+          const award = t.priority === 'high' ? 45 : t.priority === 'medium' ? 30 : 20;
+          const newTotalXp = xp + award;
+          setXp(newTotalXp);
+          // Trigger Level UP celebration if crosses boundary
+          if (Math.floor(newTotalXp / 100) > Math.floor(xp / 100)) {
+            setTimeout(() => {
+              playSound('level');
+              confetti({
+                particleCount: 80,
+                spread: 60,
+                origin: { y: 0.65 },
+                colors: ['#f59e0b', '#06b6d4', '#10b981']
+              });
+            }, 250);
+          } else {
+            // Standard mini task celebration
+            confetti({
+              particleCount: 15,
+              spread: 30,
+              angle: 90,
+              origin: { y: 0.8 },
+              colors: ['#f59e0b', '#fbbf24']
+            });
+          }
+        } else {
+          // Subtract XP safely
+          const penalty = t.priority === 'high' ? 45 : t.priority === 'medium' ? 30 : 20;
+          setXp(prev => Math.max(0, prev - penalty));
+        }
+        return { ...t, completed: nextCompleted };
+      }
+      return t;
+    });
+    setTasks(updated);
+  };
+
+  const handleToggleSubtask = (taskId: string, subtaskId: string) => {
+    playSound('check');
+    const updated = tasks.map(t => {
+      if (t.id === taskId) {
+        const nextSubs = t.subtasks.map(s => {
+          if (s.id === subtaskId) {
+            const nextVal = !s.completed;
+            if (nextVal) setXp(prev => prev + 5);
+            else setXp(prev => Math.max(0, prev - 5));
+            return { ...s, completed: nextVal };
+          }
+          return s;
+        });
+        return { ...t, subtasks: nextSubs };
+      }
+      return t;
+    });
+    setTasks(updated);
+  };
+
+  // Water Drink Action
+  const handleDrinkWater = () => {
+    playSound('check');
+    setWaterCups(prev => prev + 1);
+    setLastWaterTimestamp(new Date().toISOString());
+    confetti({
+      particleCount: 25,
+      spread: 40,
+      colors: ['#22d3ee', '#0ea5e9']
+    });
+  };
+
+  // Reset Water Cup meter
+  const handleResetWater = () => {
+    playSound('click');
+    setWaterCups(0);
+  };
+
+  // Task Creation and Modification Submissions
+  const handleOpenCreateModal = (day?: DayOfWeek) => {
     setTaskToEdit(null);
-    setIsModalOpen(true);
+    setFormTitle('');
+    setFormDescription('');
+    setFormPriority('medium');
+    setFormCategory('Geral');
+    setFormDayOfWeek(day || 'none');
+    setFormSubtasks([]);
+    setNewSubtaskTitle('');
+    setIsCreateModalOpen(true);
   };
 
-  const handleOpenEditModal = (task: Task) => {
-    setTaskToEdit(task);
-    setIsModalOpen(true);
+  const handleOpenEditModal = (t: Task) => {
+    setTaskToEdit(t);
+    setFormTitle(t.title);
+    setFormDescription(t.description || '');
+    setFormPriority(t.priority);
+    setFormCategory(t.category);
+    setFormDayOfWeek(t.dayOfWeek || 'none');
+    setFormSubtasks(t.subtasks || []);
+    setNewSubtaskTitle('');
+    setIsCreateModalOpen(true);
   };
 
-  const handleModalSubmit = (taskData: {
-    title: string;
-    description: string;
-    dueDate: string;
-    dueTime: string;
-    priority: TaskPriority;
-    category: string;
-    pomodorosTarget: number;
-    recurrence: 'none' | 'daily' | 'weekly' | 'biweekly' | 'monthly';
-    syncWithGoogle: boolean;
-    reminderMinutes?: number;
-  }) => {
+  const handleSaveTask = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formTitle.trim()) return;
+
     if (taskToEdit) {
-      updateTask(taskToEdit.id, taskData);
+      // Modify existing task
+      setTasks(prev => prev.map(t => {
+        if (t.id === taskToEdit.id) {
+          return {
+            ...t,
+            title: formTitle.trim(),
+            description: formDescription.trim(),
+            priority: formPriority,
+            category: formCategory,
+            dayOfWeek: formDayOfWeek === 'none' ? undefined : formDayOfWeek,
+            subtasks: formSubtasks
+          };
+        }
+        return t;
+      }));
     } else {
-      addTask(taskData);
-    }
-  };
-
-  const generateCompletedTasksCSV = (): string => {
-    const completedTasks = tasks.filter(task => task.completed);
-    if (completedTasks.length === 0) return '';
-
-    const headers = [
-      'ID',
-      'Titulo',
-      'Descricao',
-      'Prioridade',
-      'Categoria',
-      'Data de Entrega',
-      'Hora de Entrega',
-      'Foco Pomodoros',
-      'Foco Planejado',
-      'Recorrencia',
-      'Criado Em',
-      'Atualizado Em'
-    ];
-
-    const rows = completedTasks.map(task => {
-      const escape = (val: string | undefined | number | boolean) => {
-        if (val === undefined || val === null) return '""';
-        const str = String(val).replace(/"/g, '""');
-        return `"${str}"`;
+      // Add brand new task
+      const newTask: Task = {
+        id: 'task-' + Date.now(),
+        title: formTitle.trim(),
+        description: formDescription.trim(),
+        completed: false,
+        priority: formPriority,
+        category: formCategory,
+        dayOfWeek: formDayOfWeek === 'none' ? undefined : formDayOfWeek,
+        subtasks: formSubtasks,
+        createdAt: new Date().toISOString()
       };
+      setTasks(prev => [newTask, ...prev]);
+      
+      confetti({
+        particleCount: 20,
+        spread: 30,
+        colors: ['#f59e0b']
+      });
+    }
 
-      return [
-        escape(task.id),
-        escape(task.title),
-        escape(task.description || ''),
-        escape(task.priority),
-        escape(task.category),
-        escape(task.dueDate || ''),
-        escape(task.dueTime || ''),
-        escape(task.pomodoroCount),
-        escape(task.pomodorosTarget),
-        escape(task.recurrence || 'none'),
-        escape(task.createdAt),
-        escape(task.updatedAt)
-      ].join(',');
-    });
-
-    return [headers.join(','), ...rows].join('\n');
+    setIsCreateModalOpen(false);
+    setTaskToEdit(null);
   };
 
-  const exportCompletedTasksToCSV = () => {
-    const csvContent = generateCompletedTasksCSV();
-    if (!csvContent) return;
-
-    const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', 'citrino_tarefas_concluidas.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const handleBackupDrive = async () => {
-    setDriveStatus({ type: 'info', message: 'Salvando backup de Citrino no Google Drive...' });
-    const res = await backupToGoogleDrive();
-    if (res.success) {
-      setDriveStatus({ type: 'success', message: res.message });
-    } else {
-      setDriveStatus({ type: 'error', message: res.message });
-    }
-  };
-
-  const handleRestoreDrive = async () => {
-    const confirmRestore = window.confirm(
-      'Atenção: Restaurar o backup substituirá todas as suas tarefas locais, seu progresso do Pomodoro, nível e XP. Deseja continuar?'
-    );
-    if (!confirmRestore) return;
-
-    setDriveStatus({ type: 'info', message: 'Baixando e aplicando backup do Google Drive...' });
-    const res = await restoreFromGoogleDrive();
-    if (res.success) {
-      setDriveStatus({ type: 'success', message: res.message });
-    } else {
-      setDriveStatus({ type: 'error', message: res.message });
-    }
-  };
-
-  const handleExportCSVDrive = async () => {
-    const csvContent = generateCompletedTasksCSV();
-    if (!csvContent) {
-      setDriveStatus({ type: 'error', message: 'Você não possui tarefas concluídas no histórico para exportar!' });
-      return;
-    }
-
-    setDriveStatus({ type: 'info', message: 'Exportando relatório CSV para o Google Drive...' });
-    const res = await exportCSVToGoogleDrive(csvContent);
-    if (res.success) {
-      setDriveStatus({ type: 'success', message: res.message });
-    } else {
-      setDriveStatus({ type: 'error', message: res.message });
-    }
-  };
-
-  // Filter Tasks
-  const filteredTasks = tasks.filter((task) => {
-    // Search query matches
-    const matchesSearch = task.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      (task.description && task.description.toLowerCase().includes(searchQuery.toLowerCase()));
-    
-    // Standard Filter
-    let matchesFilter = true;
-    if (filter === 'pending') matchesFilter = !task.completed;
-    if (filter === 'completed') matchesFilter = task.completed;
-    if (filter === 'today') {
-      const todayStr = new Date().toISOString().split('T')[0];
-      matchesFilter = task.dueDate === todayStr;
-    }
-    if (filter === 'high') {
-      matchesFilter = task.priority === 'high';
-    }
-
-    // Category Filter
-    const matchesCategory = categoryFilter === 'all' || task.category === categoryFilter;
-
-    return matchesSearch && matchesFilter && matchesCategory;
-  });
-
-  // Derived stats
-  const totalCount = tasks.length;
-  const completedCount = tasks.filter((t) => t.completed).length;
-  const pendingCount = totalCount - completedCount;
-  const unsyncedCount = tasks.filter((t) => !t.isSynced).length;
-  const requiredXp = level * 100;
-  const xpPercentage = Math.min(100, Math.round((xp / requiredXp) * 100));
-
-  // 7 Days Trend Data Calculation
-  const chartData = Array.from({ length: 7 }).map((_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (6 - i));
-    const dateString = d.toISOString().split('T')[0];
-    
-    const day = String(d.getDate()).padStart(2, '0');
-    const months = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-    const label = `${day} ${months[d.getMonth()]}`;
-    
-    const createdCount = tasks.filter(task => {
-      if (!task.createdAt) return false;
-      return task.createdAt.startsWith(dateString);
-    }).length;
-
-    const completedCount = tasks.filter(task => {
-      if (!task.completed || !task.updatedAt) return false;
-      return task.updatedAt.startsWith(dateString);
-    }).length;
-
-    return {
-      dateStr: dateString,
-      label,
-      "Criadas": createdCount,
-      "Concluídas": completedCount,
+  // Form Subtask handlers
+  const handleAddFormSubtask = () => {
+    if (!newSubtaskTitle.trim()) return;
+    const newSub: SubTask = {
+      id: 'sub-' + Date.now(),
+      title: newSubtaskTitle.trim(),
+      completed: false
     };
-  });
-
-  // Draggable Board Task Card Component
-  const renderBoardTaskCard = (task: Task, hideDate: boolean = false) => {
-    let priorityColor = '';
-    if (task.priority === 'high') priorityColor = 'bg-rose-500';
-    else if (task.priority === 'medium') priorityColor = 'bg-amber-500';
-    else priorityColor = 'bg-emerald-500';
-
-    const isOverdue = task.dueDate && !task.completed && new Date(task.dueDate) < new Date(new Date().toISOString().split('T')[0]);
-
-    return (
-      <div
-        key={task.id}
-        draggable
-        onDragStart={(e) => handleDragStart(e, task.id)}
-        onClick={(e) => {
-          e.stopPropagation();
-          handleOpenEditModal(task);
-        }}
-        className={`group relative flex flex-col gap-2 rounded-xl border p-3 transition-all cursor-grab active:cursor-grabbing hover:shadow-md border-l-4 select-none ${
-          task.isSynced && task.googleEventId
-            ? 'border-cyan-500/80 shadow-[0_0_12px_rgba(6,182,212,0.25)] bg-slate-950/90'
-            : 'border-slate-850 bg-slate-950 hover:bg-slate-900 hover:border-slate-700'
-        }`}
-        style={{ borderLeftColor: task.priority === 'high' ? '#f43f5e' : task.priority === 'medium' ? '#f59e0b' : '#10b981' }}
-      >
-        <div className="flex items-start justify-between gap-1.5">
-          <div className="min-w-0">
-            <span className="rounded-full bg-slate-900/80 px-1.5 py-0.5 font-mono text-[8px] font-bold text-slate-400 uppercase tracking-wider border border-slate-850">
-              {task.category}
-            </span>
-            <h5 className="font-sans font-semibold text-xs text-slate-200 group-hover:text-amber-400 mt-1 line-clamp-2 leading-tight">
-              {task.title}
-            </h5>
-          </div>
-          <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
-            {/* Ouro / Star priority toggle */}
-            <motion.button
-              type="button"
-              onClick={(e) => handleTogglePriorityDay(task, e)}
-              whileHover={{ scale: 1.15 }}
-              whileTap={{ scale: 0.85 }}
-              className={`flex h-5 w-5 items-center justify-center rounded-md border text-[10px] cursor-pointer transition-colors ${
-                task.isPriorityDay 
-                  ? 'bg-amber-500/25 border-amber-400 text-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.2)] font-black' 
-                  : 'bg-slate-950 border-slate-850 text-slate-550 hover:text-slate-350 hover:border-slate-700'
-              }`}
-              title={task.isPriorityDay ? "Remover das Prioridades do Dia" : "Marcar como Foco do Dia"}
-            >
-              <Star className={`h-3 w-3 ${task.isPriorityDay ? 'fill-current' : ''}`} />
-            </motion.button>
-
-            {/* Complete status toggler */}
-            <motion.button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleTaskComplete(task.id);
-              }}
-              onMouseEnter={playHoverTickSound}
-              whileHover={{ scale: 1.1 }}
-              whileTap={{ scale: 0.9 }}
-              className="group/tooltip relative flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border border-slate-800 bg-slate-950 hover:bg-amber-500/10 cursor-pointer"
-            >
-              {/* Tooltip */}
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 pointer-events-none opacity-0 scale-90 group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100 transition-all duration-150 z-50">
-                <div className="bg-slate-950 text-slate-200 border border-slate-800 text-[10px] font-medium px-2 py-1 rounded shadow-lg whitespace-nowrap leading-none select-none">
-                  Concluir Tarefa
-                </div>
-                <div className="w-1.5 h-1.5 bg-slate-950 border-r border-b border-slate-800 rotate-45 mx-auto -mt-1"></div>
-              </div>
-
-              <CheckCircle2 className="CheckCircle2 h-3.5 w-3.5 opacity-0 pointer-events-none absolute" />
-              {task.completed && <CheckCircle2 className="CheckCircle2 h-3.5 w-3.5 stroke-[3] text-amber-500" />}
-            </motion.button>
-          </div>
-        </div>
-
-        {task.description && (
-          <p className="text-[10px] text-slate-500 line-clamp-2 leading-normal">
-            {task.description}
-          </p>
-        )}
-
-        {task.subtasks && task.subtasks.length > 0 && (
-          <div className="space-y-1 mt-1 pb-1">
-            <div className="flex items-center justify-between text-[8px] font-bold text-slate-400 font-mono">
-              <span className="flex items-center gap-0.5">📋 CHECKLIST</span>
-              <span>
-                {task.subtasks.filter(s => s.completed).length}/{task.subtasks.length}
-              </span>
-            </div>
-            <div className="w-full bg-slate-900 rounded-full h-1 overflow-hidden">
-              <div 
-                className="bg-amber-500 h-1 transition-all duration-300"
-                style={{ width: `${(task.subtasks.filter(s => s.completed).length / task.subtasks.length) * 100}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        <div className="flex items-center justify-between pt-1.5 mt-0.5 font-mono text-[9px] text-slate-550 border-t border-slate-900">
-          <span className="flex items-center gap-0.5">
-            🍅 {task.pomodoroCount || 0}/{task.pomodorosTarget || 1}
-          </span>
-          {!hideDate && task.dueDate && (
-            <span className={`font-mono flex items-center gap-0.5 ${isOverdue ? 'text-rose-450 font-bold' : ''}`}>
-              📅 {task.dueDate.split('-').slice(1).reverse().join('/')}
-            </span>
-          )}
-          {!task.isSynced && (() => {
-            const queueEntry = SyncQueueDB.getEntries().find(e => e.taskId === task.id);
-            if (queueEntry && queueEntry.attempts > 0) {
-              return (
-                <span 
-                  className="flex items-center gap-1 text-[8px] font-black text-rose-400 bg-rose-500/10 px-1 py-0.5 rounded border border-rose-500/20 uppercase tracking-tighter"
-                  title={`Erro: ${queueEntry.lastError || 'Rede fora'} - Próxima retentativa: ${queueEntry.nextAttemptAfter ? new Date(queueEntry.nextAttemptAfter).toLocaleTimeString() : 'Imediato'}`}
-                >
-                  ⚠️ Erro (Repass #{queueEntry.attempts})
-                </span>
-              );
-            }
-            return (
-              <span className="flex items-center gap-0.5 text-[8px] font-bold text-amber-500 uppercase tracking-tighter">
-                ● offline
-              </span>
-            );
-          })()}
-        </div>
-      </div>
-    );
+    setFormSubtasks(prev => [...prev, newSub]);
+    setNewSubtaskTitle('');
   };
 
-  const renderBoardView = () => {
-    const weekDays = getWeekDays();
-    const inboxTasks = tasks.filter(t => !t.dueDate && !t.completed);
+  const handleRemoveFormSubtask = (id: string) => {
+    setFormSubtasks(prev => prev.filter(s => s.id !== id));
+  };
 
-    const filteredInbox = inboxTasks.filter(t => {
-      const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        (t.description && t.description.toLowerCase().includes(searchQuery.toLowerCase()));
-      const matchesCategory = categoryFilter === 'all' || t.category === categoryFilter;
-      return matchesSearch && matchesCategory;
-    });
+  // Delete Task
+  const handleDeleteTask = (id: string) => {
+    playSound('click');
+    setTasks(prev => prev.filter(t => t.id !== id));
+  };
 
-    return (
-      <div className="space-y-6 animate-feed-in w-full">
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-          
-          {/* Column A: Caixa de Entrada / Gaveta de Ideias */}
-          <div 
-            onDragOver={handleDragOver}
-            onDrop={handleDropOnInbox}
-            className="xl:col-span-4 rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-4 min-h-[480px] transition-all"
-            style={{ contentVisibility: 'auto' }}
-          >
-            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
-                  <Layers className="h-4 w-4" />
-                </div>
-                <div>
-                  <h3 className="font-sans text-xs font-black tracking-wider uppercase text-slate-200">
-                    Gaveta de Ideias
-                  </h3>
-                  <p className="text-[10px] text-slate-550">Arrastar para cá desagenda tarefa</p>
-                </div>
-              </div>
-              <span className="rounded-full bg-slate-950 px-2.5 py-0.5 font-mono text-[10px] font-bold text-amber-500 border border-slate-850">
-                {filteredInbox.length}
-              </span>
-            </div>
+  // Reset demo structure helper
+  const handleResetApp = () => {
+    if (window.confirm('Tem certeza de que deseja apagar todas as personalizações e tarefas? Isso reiniciará o aplicativo.')) {
+      localStorage.clear();
+      setTasks(INITIAL_TASKS);
+      setXp(120);
+      setWaterCups(0);
+      setLastWaterTimestamp(new Date().toISOString());
+      setViewMode('tarefas');
+      confetti({ particleCount: 30 });
+    }
+  };
 
-            {/* List inner */}
-            <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-              {filteredInbox.length === 0 ? (
-                <div className="text-center py-12 border border-dashed border-slate-850 rounded-xl bg-slate-950/20">
-                  <Layers className="h-7 w-7 text-slate-750 mx-auto stroke-[1.5]" />
-                  <p className="text-xs font-semibold text-slate-400 mt-2">Sua Gaveta está limpa!</p>
-                  <p className="text-[10px] text-slate-500 mt-1 max-w-xs mx-auto px-2 leading-relaxed">
-                    Crie tarefas sem data de entrega para guardá-las aqui ou use os Modelos Prontos rápidos à direita.
-                  </p>
-                </div>
-              ) : (
-                filteredInbox.map(task => renderBoardTaskCard(task))
-              )}
-            </div>
-            
-            <button
-              onClick={handleOpenCreateModal}
-              className="w-full mt-2 py-2.5 border border-dashed border-slate-800 hover:border-amber-500/30 rounded-xl font-sans text-xs font-semibold text-slate-400 hover:text-amber-400 transition-colors bg-slate-950/20 text-center flex items-center justify-center gap-1 cursor-pointer"
-            >
-              <Plus className="h-3.5 w-3.5" /> Adicionar na Gaveta
-            </button>
+  // Switch tabs with a micro-sound feedback
+  const handleViewChange = (mode: 'tarefas' | 'agenda' | 'progresso' | 'configuracoes') => {
+    playSound('click');
+    setViewMode(mode);
+    setIsMobileMenuOpen(false);
+  };
 
-            {/* Quick Import Templates for local enxuto heuristics */}
-            <div className="pt-3 border-t border-slate-850 mt-2 space-y-2">
-              <p className="text-[10px] font-bold text-slate-450 uppercase tracking-widest block">
-                ⚡ Modelos de Foco Local
-              </p>
-              <div className="flex flex-col gap-1.5">
-                {TASK_TEMPLATES.map(tpl => (
-                  <button
-                    key={tpl.id}
-                    onClick={() => handleImportTemplate(tpl)}
-                    className="w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded-lg border border-slate-850 bg-slate-950/40 hover:bg-slate-900 transition-colors text-[11px] font-semibold text-slate-300 hover:text-amber-400 group cursor-pointer"
-                    title={tpl.description}
-                  >
-                    <span className="flex items-center gap-1.5 truncate">
-                      <span>{tpl.icon}</span> <span className="truncate">{tpl.name}</span>
-                    </span>
-                    <span className="text-[9px] font-mono font-bold bg-slate-900 px-1 py-0.5 rounded text-amber-500 group-hover:bg-amber-500/15 flex-shrink-0">
-                      + Importar
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
+  // Computed/Filtered tasks list
+  const filteredTasks = tasks.filter(t => {
+    const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          (t.description || '').toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCategory = categoryFilter === 'all' || t.category === categoryFilter;
+    const matchesPriority = priorityFilter === 'all' || t.priority === priorityFilter;
+    const matchesCompleted = showCompleted || !t.completed;
+    return matchesSearch && matchesCategory && matchesPriority && matchesCompleted;
+  });
 
-          {/* Column B: Weekly Planner */}
-          <div className="xl:col-span-8 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-850/50 pb-2">
-              <div>
-                <h3 className="font-sans text-xs font-extrabold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
-                  📅 Planejador Semanal (Board)
-                </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Arrastar e soltar tarefas para agendar seu ritmo semanal de estudos de forma tátil.
-                </p>
-              </div>
-            </div>
+  // Calculate generic counts for the sidebar badges
+  const activeTasksCount = tasks.filter(t => !t.completed).length;
+  const weeklyAgendaCount = tasks.filter(t => t.dayOfWeek && !t.completed).length;
 
-            {/* 7 Days Grid Board */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-3 pb-2 overflow-x-auto">
-              {weekDays.map(day => {
-                const dayTasks = tasks.filter(t => t.dueDate === day.dateStr && !t.completed);
-                
-                return (
-                  <div
-                    key={day.dateStr}
-                    onDragOver={handleDragOver}
-                    onDrop={(e) => handleDropOnDay(e, day.dateStr)}
-                    className={`rounded-xl border p-3 flex flex-col gap-3 min-h-[440px] transition-all duration-250 ${
-                      day.isToday
-                        ? 'bg-slate-900 border-amber-500/40 shadow-lg shadow-amber-500/5'
-                        : 'bg-slate-900/40 border-slate-800 hover:border-slate-850'
-                    }`}
-                  >
-                    {/* Day Header */}
-                    <div className="flex items-center justify-between border-b border-slate-850 pb-2">
-                      <div className="min-w-0">
-                        <p className={`text-[10px] font-black uppercase tracking-wider ${
-                          day.isToday ? 'text-amber-500 font-extrabold' : 'text-slate-400 font-semibold'
-                        }`}>
-                          {day.name}
-                        </p>
-                        <p className="text-xs font-mono font-bold text-slate-200">{day.dayOfMonth}</p>
-                      </div>
-                      <span className="rounded-full bg-slate-950 px-1.5 py-0.5 font-mono text-[9px] text-slate-400 font-semibold border border-slate-850">
-                        {dayTasks.length}
-                      </span>
-                    </div>
+  // Weekly layout mapping
+  const DAYS_LIST: DayOfWeek[] = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
 
-                    {/* Day Tasks Inner List */}
-                    <div className="flex-1 flex flex-col gap-2 overflow-y-auto max-h-[360px]">
-                      {dayTasks.length === 0 ? (
-                        <div className="flex-1 flex items-center justify-center p-2 border border-dashed border-slate-850 bg-slate-950/10 rounded-lg text-center min-h-[80px]">
-                          <p className="text-[9px] leading-snug font-mono text-slate-700 tracking-tight">Vazio</p>
-                        </div>
-                      ) : (
-                        dayTasks.map(task => renderBoardTaskCard(task, true))
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-        </div>
-      </div>
-    );
+  // Categories helper list for styling
+  const getCategoryColor = (cat: TaskCategory) => {
+    switch (cat) {
+      case 'Trabalho': return 'text-amber-500 bg-amber-550/10 border-amber-500/20';
+      case 'Estudo': return 'text-cyan-400 bg-cyan-400/10 border-cyan-400/20';
+      case 'Pessoal': return 'text-indigo-400 bg-indigo-400/10 border-indigo-400/20';
+      case 'Saúde': return 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20';
+      default: return 'text-slate-350 bg-slate-800/40 border-slate-700/35';
+    }
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-amber-500 selection:text-slate-950">
+    <div id="citrino-applet" className="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased md:flex transition-colors duration-200">
       
-      {/* Dynamic Background Aura Effects */}
-      <div className="hidden md:block fixed top-0 left-1/4 -z-10 h-96 w-96 rounded-full bg-amber-500/5 blur-[120px] pointer-events-none" />
-      <div className="hidden md:block fixed bottom-10 right-1/4 -z-10 h-96 w-96 rounded-full bg-indigo-505/5 blur-[120px] pointer-events-none" />
-
-      {/* Header Bar */}
-      <header className="sticky top-0 z-40 border-b border-slate-900 bg-slate-950/85 backdrop-blur-md py-1.5 sm:py-0">
-        <div className="mx-auto flex flex-col md:flex-row gap-3 items-center justify-between px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-600 to-yellow-400 text-slate-950 shadow-md shadow-amber-500/10 active:scale-95 transition-transform">
-              <Sparkles className="h-5 w-5 fill-current" />
+      {/* 🚀 RESPONSIVE SIDEBAR: VERTICAL FUNCTIONS MENU */}
+      <aside className="fixed inset-y-0 left-0 w-64 border-r border-slate-850 bg-slate-900 hidden md:flex flex-col z-30 select-none transition-colors duration-200">
+        {/* Branding Title & Icon */}
+        <div className="p-6 border-b border-slate-850 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-600 to-yellow-400 text-slate-950 shadow-md">
+              <Zap className="h-5 w-5 fill-current" />
             </div>
-            <div className="text-center md:text-left">
-              <h1 className="font-sans text-sm font-black tracking-tight text-white uppercase sm:text-base">
-                Citrino <span className="text-amber-500">Tarefas</span>
-              </h1>
-              <p className="text-[10px] font-mono font-bold text-slate-500 leading-none uppercase">
-                Offline-First Task MVP v1.0
-              </p>
+            <div>
+              <h1 className="font-sans text-sm font-black tracking-widest text-[#ffffff] uppercase leading-none">Citrino</h1>
+              <span className="text-[9px] font-bold text-amber-500 uppercase tracking-widest leading-none block mt-1">PLANNER INTELIGENTE</span>
             </div>
           </div>
 
-          {/* Sprints vs Dashboard Mode Controls */}
-          <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-2.5">
-            {/* Gratidão (Gratitude Journal) Button */}
-            <button
-              onClick={() => {
-                setIsGratitudeOpen(true);
-                if (soundEnabled) {
-                  try { playFocusSound(); } catch (err) {}
-                }
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer bg-gradient-to-r from-rose-500/10 to-amber-500/10 border-rose-500/20 text-rose-400 hover:from-rose-500/20 hover:to-amber-500/20 hover:text-rose-300 hover:scale-[1.03] shadow-md shadow-rose-500/5"
-              title="Abrir Diário de Gratidão e Considerações do Dia"
-            >
-              <Heart className="h-3.5 w-3.5 text-rose-500 fill-rose-500/40 animate-[pulse_3s_infinite]" />
-              <span>Gratidão</span>
-            </button>
+          {/* Theme Selector (Desktop) */}
+          <button
+            onClick={() => {
+              playSound('click');
+              setTheme(theme === 'light' ? 'dark' : 'light');
+            }}
+            className="p-1.5 h-8 w-8 rounded-lg bg-slate-850 border border-slate-800 text-slate-400 hover:text-white transition-all cursor-pointer flex items-center justify-center hover:scale-105 active:scale-95"
+            title={theme === 'light' ? 'Modo Escuro' : 'Modo Claro'}
+          >
+            {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4 text-amber-400" />}
+          </button>
+        </div>
 
-            {/* Statistics & Progress Toggle */}
-            <button
-              onClick={() => {
-                setShowStats(!showStats);
-                playFocusSound();
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
-                showStats
-                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-500 hover:bg-amber-500/20'
-                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-850 hover:text-slate-200'
-              }`}
-              title={showStats ? 'Ocultar Gráficos e XP Gamificado' : 'Visualizar Gráficos e XP Gamificado'}
-            >
-              <Trophy className={`h-3.5 w-3.5 ${showStats ? 'text-amber-500 animate-bounce' : 'text-slate-400'}`} />
-              <span className="hidden sm:inline">{showStats ? 'Ocultar Estatísticas' : 'Estatísticas'}</span>
-            </button>
+        {/* Level & XP micro HUD panel */}
+        <div className="p-4 mx-4 my-3 rounded-2xl bg-slate-850 border border-slate-800 flex items-center gap-3.5 transition-colors duration-200">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500 font-black border border-amber-500/20 text-sm">
+            Lvl {level}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex justify-between text-[11px] font-bold text-slate-400 mb-1">
+              <span>Nível Atual</span>
+              <span>{xpInCurrentLevel}/100 XP</span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+              <div 
+                className="h-full bg-gradient-to-r from-amber-500 to-amber-300 rounded-full transition-all duration-300" 
+                style={{ width: `${xpInCurrentLevel}%` }}
+              />
+            </div>
+          </div>
+        </div>
 
-            {/* Theme Toggle Button */}
-            <button
-              onClick={toggleTheme}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-850 hover:text-slate-200"
-              title={theme === 'dark' ? 'Mudar para Modo Claro' : 'Mudar para Modo Escuro'}
-            >
-              {theme === 'dark' ? (
-                <>
-                  <Sun className="h-3.5 w-3.5 text-amber-500 animate-[spin_12s_linear_infinite]" />
-                  <span className="hidden sm:inline">Claro</span>
-                </>
-              ) : (
-                <>
-                  <Moon className="h-3.5 w-3.5 text-indigo-400" />
-                  <span className="hidden sm:inline">Escuro</span>
-                </>
-              )}
-            </button>
-
-            {/* Sound Effects Toggle */}
-            <button
-              onClick={() => setSoundEnabled(!soundEnabled)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
-                soundEnabled
-                  ? 'bg-slate-900 border-emerald-500/30 text-emerald-400 hover:bg-slate-800'
-                  : 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-400 hover:border-slate-700'
-              }`}
-              title={soundEnabled ? 'Sons Ativos (Clique para silenciar)' : 'Silenciado (Clique para ativar sons)'}
-            >
-              {soundEnabled ? (
-                <>
-                  <Volume2 className="h-3.5 w-3.5 text-emerald-400 animate-pulse" />
-                  <span className="hidden sm:inline">Som: On</span>
-                </>
-              ) : (
-                <>
-                  <VolumeX className="h-3.5 w-3.5 text-slate-500" />
-                  <span className="hidden sm:inline">Som: Off</span>
-                </>
-              )}
-            </button>
-
-            {/* Configurações (Settings) Dropdown */}
-            <div className="relative" id="global-settings-dropdown">
+        {/* Dynamic Vertical List Menu */}
+        <nav className="flex-1 px-4 py-3 space-y-1">
+          <span className="text-[10px] font-black tracking-widest text-[#41537C] uppercase block px-3 mb-2">FUNÇÕES</span>
+          {[
+            { id: 'tarefas', label: 'Lista de Tarefas', icon: CheckCircle2, badge: activeTasksCount, color: 'text-amber-500' },
+            { id: 'agenda', label: 'Agenda Semanal', icon: Calendar, badge: weeklyAgendaCount, color: 'text-cyan-400' },
+            { id: 'progresso', label: 'Estatísticas & Nivel', icon: TrendingUp, color: 'text-emerald-400' },
+            { id: 'configuracoes', label: 'Configurações', icon: Settings, color: 'text-[#94A3B8]' }
+          ].map((item) => {
+            const Icon = item.icon;
+            const isActive = viewMode === item.id;
+            return (
               <button
-                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
-                  isSettingsOpen
-                    ? 'bg-slate-800 border-amber-500/50 text-amber-500'
-                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-850 hover:text-slate-200 hover:border-slate-700'
+                key={item.id}
+                onClick={() => handleViewChange(item.id as any)}
+                className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition-all duration-300 group ${
+                  isActive
+                    ? 'bg-amber-500/10 text-amber-500 border border-amber-500/25 shadow-md shadow-amber-500/5'
+                    : 'text-slate-400 hover:text-slate-100 hover:bg-slate-850/60 border border-transparent'
                 }`}
-                title="Configurações Gerais"
               >
-                <Settings className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Ajustes</span>
-              </button>
-
-              {isSettingsOpen && (
-                <div 
-                  className="absolute right-0 mt-2 w-64 rounded-xl border border-slate-800 bg-slate-950 p-4 shadow-2xl z-50 flex flex-col gap-3 font-sans"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="border-b border-slate-900 pb-2 mb-1 flex items-center justify-between">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Configurações Gerais</span>
-                    <button
-                      onClick={() => setIsSettingsOpen(false)}
-                      className="text-slate-600 hover:text-slate-400 text-xs font-bold cursor-pointer"
-                    >
-                      ✕
-                    </button>
-                  </div>
-
-                  {/* New Default Reminder minutes Setting option */}
-                  <div className="space-y-1.5">
-                    <label className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                      <Bell className="h-3 w-3 text-amber-500" />
-                      Lembrete Padrão
-                    </label>
-                    <select
-                      value={defaultReminderMinutes}
-                      onChange={(e) => {
-                        setDefaultReminderMinutes(Number(e.target.value));
-                        if (soundEnabled) {
-                          try {
-                            // play tick sound if context is available
-                            playFocusSound();
-                          } catch (err) {}
-                        }
-                      }}
-                      className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2.5 py-1.5 font-sans text-xs text-slate-300 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500/20 cursor-pointer"
-                    >
-                      <option value={0}>Sem lembrete</option>
-                      <option value={5}>5 minutos antes</option>
-                      <option value={15}>15 minutos antes</option>
-                      <option value={30}>30 minutos antes</option>
-                      <option value={60}>60 minutos (1 hora) antes</option>
-                    </select>
-                    <p className="text-[9px] text-slate-500 leading-relaxed font-mono">
-                      Tempo padrão de antecedência para novas metas.
-                    </p>
-                  </div>
+                <div className="flex items-center gap-3">
+                  <Icon className={`h-4.5 w-4.5 transition-transform duration-300 group-hover:scale-110 ${isActive ? item.color : 'text-slate-500'}`} />
+                  <span>{item.label}</span>
                 </div>
+                {item.badge !== undefined && item.badge > 0 && (
+                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-black ${isActive ? 'bg-amber-500 text-slate-950 font-black' : 'bg-slate-850 text-slate-400 border border-slate-800'}`}>
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Minimalist Water Reminder integrated into the bottom of sidebar */}
+        <div className="p-4 border-t border-slate-850 bg-slate-900/40 transition-colors duration-200">
+          <div 
+            className={`rounded-2xl p-3.5 border transition-all duration-500 ${
+              isHydrationOverdue 
+                ? 'border-cyan-500/60 bg-cyan-950/20 shadow-[0_0_12px_rgba(6,182,212,0.15)] animate-[border-pulse-cyan_2s_infinite]' 
+                : 'border-slate-800 bg-slate-900'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] font-black text-cyan-400 uppercase tracking-widest flex items-center gap-1">
+                <Droplet className="h-3 w-3 fill-current animate-bounce" /> Hidratação
+              </span>
+              <span className="text-[10px] font-mono font-bold text-slate-400">Há {Math.floor(secondsSinceWater / 60)}m</span>
+            </div>
+            
+            <p className="text-[11px] leading-relaxed text-slate-300 mb-2.5">
+              {waterCups >= 8 ? '🎯 Meta diária alcançada! Excelente!' : `Você registrou ${waterCups} de 8 copos hoje.`}
+            </p>
+
+            <div className="flex gap-1.5">
+              <button
+                onClick={handleDrinkWater}
+                className="flex-1 py-1.5 px-3 bg-gradient-to-r from-cyan-500 to-sky-400 text-slate-950 font-black text-[10px] rounded-lg tracking-wider uppercase transition-colors hover:brightness-110 cursor-pointer border-0 shadow"
+              >
+                + Registrar Copo
+              </button>
+              {waterCups > 0 && (
+                <button
+                  onClick={handleResetWater}
+                  title="Zerar água"
+                  className="p-1.5 bg-slate-900 border border-slate-800 text-slate-400 hover:text-white rounded-lg transition-all cursor-pointer"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                </button>
               )}
             </div>
-
-            <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-xs">
-              <button
-                onClick={() => setViewMode('app')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer ${
-                  viewMode === 'app'
-                    ? 'bg-amber-500 text-slate-950 font-extrabold shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <CheckCircle className="h-3.5 w-3.5" /> Dashboard
-              </button>
-              <button
-                onClick={() => setViewMode('semana')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer ${
-                  viewMode === 'semana'
-                    ? 'bg-amber-500 text-slate-950 font-extrabold shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <Calendar className="h-3.5 w-3.5" /> Semana
-              </button>
-            </div>
           </div>
+        </div>
+      </aside>
+
+      {/* MOBILE HEADER & DRAWER TRIGGER */}
+      <header className="md:hidden sticky top-0 z-40 border-b border-slate-850 bg-slate-900/90 backdrop-blur-md px-4 py-3 flex items-center justify-between transition-colors duration-200">
+        <div className="flex items-center gap-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-tr from-amber-600 to-yellow-400 text-slate-950 shadow">
+            <Zap className="h-4 w-4 fill-current" />
+          </div>
+          <div>
+            <h1 className="font-sans text-xs font-black tracking-wider text-slate-50 uppercase">Citrino</h1>
+            <span className="text-[8px] text-amber-500 font-bold block leading-none">Nível {level} • {xpInCurrentLevel}/100 XP</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {/* Theme Selector (Mobile) */}
+          <button
+            onClick={() => {
+              playSound('click');
+              setTheme(theme === 'light' ? 'dark' : 'light');
+            }}
+            className="p-2 text-slate-400 hover:text-slate-100 bg-slate-850 border border-slate-800 rounded-xl transition-all h-9 w-9 flex items-center justify-center hover:scale-105 active:scale-95 cursor-pointer"
+            title={theme === 'light' ? 'Modo Escuro' : 'Modo Claro'}
+          >
+            {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4 text-amber-400" />}
+          </button>
+
+          <button
+            onClick={() => setIsMobileMenuOpen(true)}
+            className="p-2 text-slate-400 hover:text-white bg-slate-850 border border-slate-800 rounded-xl cursor-pointer"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
         </div>
       </header>
 
-      {/* Simulated Offline Active Alert Banner */}
-      {isOfflineSimulated && (
-        <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2.5 sm:px-6">
-          <div className="mx-auto max-w-7xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-semibold text-amber-400">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-amber-500 animate-ping flex-shrink-0" />
-              <span className="leading-snug">Conexão Simulada Desconectada: Alterações salvas localmente e agendadas na fila de sincronização.</span>
-            </div>
-            <button
-              onClick={() => setIsOfflineSimulated(false)}
-              className="px-2.5 py-1 bg-amber-500 text-slate-950 font-black rounded-lg hover:bg-amber-400 transition-colors uppercase text-[9px] cursor-pointer"
-            >
-              Conectar Nuvem
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Gamification Stats Banner */}
+      {/* MOBILE NAVIGATION SLIDE DRAWER overlay */}
       <AnimatePresence>
-        {showStats && (
-          <motion.section 
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.3, ease: 'easeInOut' }}
-            className="bg-slate-900/40 border-b border-slate-900 px-4 py-5 sm:px-6 overflow-hidden"
-          >
-        <div className="mx-auto max-w-7xl">
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
-            
-            {/* XP and Level tracker badge cards */}
-            <div className="md:col-span-5 flex items-center gap-4 bg-slate-900 p-4 rounded-xl border border-slate-800">
-              <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/10">
-                <Trophy className="h-6 w-6" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-baseline justify-between">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">
-                    Nível do Construtor
-                  </span>
-                  <span className="font-mono text-xs font-bold text-amber-500">
-                    XP {xp}/{requiredXp}
-                  </span>
-                </div>
-                <div className="mt-1 flex items-center gap-2.5">
-                  <span className="font-sans text-xl font-extrabold text-white">
-                    Lvl {level}
-                  </span>
-                  {/* Progress Gauge */}
-                  <div className="h-2 flex-1 rounded-full bg-slate-950 overflow-hidden border border-slate-800">
-                    <div
-                      className="h-full bg-gradient-to-r from-amber-600 to-yellow-400 rounded-full transition-all duration-500"
-                      style={{ width: `${xpPercentage}%` }}
-                    />
-                  </div>
-                  <span className="font-mono text-xs text-slate-400">{xpPercentage}%</span>
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  if (confirm('Deseja resetar sua pontuação de XP?')) {
-                    resetXP();
-                  }
-                }}
-                className="p-1 rounded hover:bg-slate-800 text-slate-600 hover:text-slate-400"
-                title="Resetar XP de Portfólio"
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-              </button>
-            </div>
+        {isMobileMenuOpen && (
+          <div className="fixed inset-0 z-50 md:hidden select-none">
+            {/* Backdrop black overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-xs"
+            />
 
-            {/* Sync State monitor Panel */}
-            <div className="md:col-span-3 flex items-center justify-between bg-slate-900/80 p-4 rounded-xl border border-slate-800">
-              <div className="space-y-1">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Nuvem Offline-First</p>
-                <p className="text-lg font-black mt-0.5 text-slate-100 flex items-center gap-1.5 leading-none">
-                  {unsyncedCount === 0 ? (
-                    <span className="text-emerald-400">Dados Sincronizados</span>
-                  ) : (
-                    <span className="text-amber-500">{unsyncedCount} Pendentes</span>
-                  )}
-                </p>
-                {/* Simulation toggle */}
-                <button
-                  onClick={() => setIsOfflineSimulated(!isOfflineSimulated)}
-                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border text-[9px] font-bold uppercase transition-all cursor-pointer ${
-                    isOfflineSimulated 
-                      ? 'bg-rose-500/15 border-rose-500/30 text-rose-450 hover:bg-rose-500/30 font-black' 
-                      : 'bg-emerald-500/5 border-emerald-500/15 text-emerald-400 hover:bg-emerald-500/15'
-                  }`}
-                  title={isOfflineSimulated ? 'Clique para simular rede conectada' : 'Clique para simular rede desconectada'}
-                >
-                  {isOfflineSimulated ? '🔌 Simulação: Offline' : '🌐 Simulação: Conectado'}
-                </button>
-              </div>
-
-              <button
-                onClick={triggerOfflineSync}
-                disabled={isSyncing}
-                className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border text-slate-350 cursor-pointer transition-all ${
-                  unsyncedCount > 0 
-                  ? 'bg-amber-500/10 border-amber-500/20 text-amber-500 hover:bg-amber-500/20' 
-                  : 'bg-slate-950 border-slate-800 hover:bg-slate-800'
-                }`}
-                title={unsyncedCount > 0 ? 'Fazer uploads de dados pendentes' : 'Tudo em ordem'}
-              >
-                <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin text-amber-500' : ''}`} />
-              </button>
-            </div>
-
-            {/* Quick Metrics display */}
-            <div className="md:col-span-4 grid grid-cols-3 gap-3">
-              <div className="bg-slate-900/50 p-3 rounded-xl border border-slate-850 text-center">
-                <span className="text-[10px] font-semibold text-slate-500 block uppercase">Criadas</span>
-                <span className="font-mono text-base font-black text-slate-200">{totalCount}</span>
-              </div>
-              <div className="bg-slate-900/50 p-3 rounded-xl border border-slate-850 text-center">
-                <span className="text-[10px] font-semibold text-slate-500 block uppercase">Completas</span>
-                <span className="font-mono text-base font-black text-emerald-400">{completedCount}</span>
-              </div>
-              <div className="bg-slate-900/50 p-3 rounded-xl border border-slate-850 text-center">
-                <span className="text-[10px] font-semibold text-slate-500 block uppercase">Pendentes</span>
-                <span className="font-mono text-base font-black text-amber-500">{pendingCount}</span>
-              </div>
-            </div>
-
-          </div>
-
-          {/* 7-Day Performance Trend section inside Gamification Stats Banner */}
-          <div className="mt-6 border-t border-slate-800 pt-5">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+            {/* Sidebar Slide-in */}
+            <motion.div
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+              className="absolute inset-y-0 left-0 w-72 bg-slate-900 border-r border-slate-800 flex flex-col justify-between p-6"
+            >
               <div>
-                <h3 className="font-sans text-xs font-bold text-slate-200 flex items-center gap-1.5 uppercase tracking-wide">
-                  <span>📊</span> Tendência de Desempenho (Últimos 7 dias)
-                </h3>
-                <p className="text-[11px] text-slate-500">
-                  Métricas dinâmicas de engajamento e conclusão de tarefas no MVP.
-                </p>
-              </div>
-              
-              {/* Custom Legend */}
-              <div className="flex items-center gap-4 text-[10px] uppercase font-bold tracking-wider">
-                <div className="flex items-center gap-1.5 text-slate-400">
-                  <span className="inline-block h-2 w-2 rounded bg-indigo-505" style={{ backgroundColor: '#6366f1' }} />
-                  <span>Criadas</span>
+                <div className="flex items-center justify-between pb-6 border-b border-slate-800 mb-6">
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex h-8.5 w-8.5 items-center justify-center rounded-lg bg-gradient-to-tr from-amber-600 to-yellow-400 text-slate-950 shadow">
+                      <Zap className="h-4.5 w-4.5 fill-current" />
+                    </div>
+                    <span className="font-sans text-sm font-black tracking-widest text-slate-100 uppercase">Citrino</span>
+                  </div>
+                  <button
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className="p-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-white cursor-pointer"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 </div>
-                <div className="flex items-center gap-1.5 text-slate-400">
-                  <span className="inline-block h-2 w-2 rounded bg-amber-500" style={{ backgroundColor: '#f59e0b' }} />
-                  <span>Concluídas</span>
-                </div>
-              </div>
-            </div>
 
-            {/* Recharts Container */}
-            <div id="recharts-activity-container" className="h-44 w-full bg-slate-900/30 rounded-xl border border-slate-800/80 p-2 sm:p-4 overflow-hidden max-w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart
-                  data={chartData}
-                  margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-                >
-                  <defs>
-                    <linearGradient id="colorCriadas" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.25}/>
-                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="colorConcluidas" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.25}/>
-                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.06)'} />
-                  <XAxis 
-                    dataKey="label" 
-                    tick={{ fill: theme === 'dark' ? '#475569' : '#64748b', fontSize: 10 }} 
-                    axisLine={{ stroke: theme === 'dark' ? '#1e293b' : '#cbd5e1' }}
-                    tickLine={false}
-                  />
-                  <YAxis 
-                    allowDecimals={false}
-                    tick={{ fill: theme === 'dark' ? '#475569' : '#64748b', fontSize: 10 }}
-                    axisLine={{ stroke: theme === 'dark' ? '#1e293b' : '#cbd5e1' }}
-                    tickLine={false}
-                  />
-                  <Tooltip
-                    content={({ active, payload, label }) => {
-                      if (active && payload && payload.length) {
-                        return (
-                          <div className={`p-3 rounded-xl border shadow-xl font-sans text-[11px] ${
-                            theme === 'dark' 
-                              ? 'bg-slate-950 border-slate-800 text-slate-200' 
-                              : 'bg-white border-slate-150 text-slate-800'
-                          }`}>
-                            <p className="font-bold mb-1">{label}</p>
-                            <div className="space-y-1">
-                              <p className="text-indigo-400 flex items-center gap-1">
-                                <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-                                Criadas: <span className="font-mono font-bold text-slate-100">{payload[0].value}</span>
-                              </p>
-                              {payload[1] && (
-                                <p className="text-amber-500 flex items-center gap-1">
-                                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                                  Concluídas: <span className="font-mono font-bold text-slate-100">{payload[1].value}</span>
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      }
-                      return null;
+                {/* Level Display */}
+                <div className="p-3.5 rounded-xl bg-slate-850 border border-slate-800 flex items-center gap-3 mb-6">
+                  <div className="h-9 w-9 flex shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500 border border-amber-550/20 text-xs font-black">
+                    Lvl {level}
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex justify-between text-[10px] text-slate-400 font-bold mb-1">
+                      <span>Progresso do Nível</span>
+                      <span>{xpInCurrentLevel}%</span>
+                    </div>
+                    <div className="w-full h-1 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                      <div className="h-full bg-amber-500 rounded-full" style={{ width: `${xpInCurrentLevel}%` }} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Navigation links */}
+                <nav className="space-y-1.5">
+                  <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest block px-2.5 mb-1.5">FUNÇÕES</span>
+                  {[
+                    { id: 'tarefas', label: 'Lista de Tarefas', icon: CheckCircle2, badge: activeTasksCount, color: 'text-amber-500' },
+                    { id: 'agenda', label: 'Agenda Semanal', icon: Calendar, badge: weeklyAgendaCount, color: 'text-cyan-400' },
+                    { id: 'progresso', label: 'Estatísticas & Nivel', icon: TrendingUp, color: 'text-emerald-400' },
+                    { id: 'configuracoes', label: 'Configurações', icon: Settings, color: 'text-slate-400' }
+                  ].map((item) => {
+                    const Icon = item.icon;
+                    const isActive = viewMode === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => handleViewChange(item.id as any)}
+                        className={`w-full flex items-center justify-between px-3 py-3 rounded-xl text-xs font-bold transition-all duration-300 ${
+                          isActive
+                            ? 'bg-amber-500/10 text-amber-500 border border-amber-500/25 shadow'
+                            : 'text-slate-400 hover:text-slate-250 hover:bg-slate-850/65'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <Icon className={`h-4.5 w-4.5 ${isActive ? item.color : 'text-slate-500'}`} />
+                          <span>{item.label}</span>
+                        </div>
+                        {item.badge !== undefined && item.badge > 0 && (
+                          <span className="px-2 py-0.5 rounded-md text-[9px] font-black bg-amber-500 text-slate-950">
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </nav>
+              </div>
+
+              {/* Mobile bottom panel */}
+              <div className="mt-8 pt-4 border-t border-slate-800">
+                <div className={`rounded-xl p-3 border ${isHydrationOverdue ? 'border-cyan-500/50 bg-cyan-950/15 animate-pulse' : 'border-slate-800 bg-slate-850'}`}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[9px] font-black text-cyan-400 uppercase tracking-widest flex items-center gap-1">💧 Água</span>
+                    <span className="text-[9px] text-slate-400">Total: {waterCups} copos</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      handleDrinkWater();
+                      setIsMobileMenuOpen(false);
                     }}
-                  />
-                  <Area 
-                    type="monotone" 
-                    dataKey="Criadas" 
-                    stroke="#6366f1" 
-                    strokeWidth={2}
-                    fillOpacity={1} 
-                    fill="url(#colorCriadas)" 
-                  />
-                  <Area 
-                    type="monotone" 
-                    dataKey="Concluídas" 
-                    stroke="#f59e0b" 
-                    strokeWidth={2}
-                    fillOpacity={1} 
-                    fill="url(#colorConcluidas)" 
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-
+                    className="w-full py-1.5 bg-cyan-500 text-slate-950 font-black text-[9px] rounded-lg tracking-wider uppercase border-0 cursor-pointer shadow"
+                  >
+                    Marcar Copo d'Água 💧
+                  </button>
+                </div>
+              </div>
+            </motion.div>
           </div>
-        </div>
-          </motion.section>
         )}
       </AnimatePresence>
 
-      {/* Main Content Area */}
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
-        
-        {viewMode === 'semana' ? (
-          /* Plain Documentation view selected */
-          <div className="space-y-6 animate-feed-in">
-            <WeeklyPlanner 
-              tasks={tasks}
-              addTask={addTask}
-              updateTask={updateTask}
-              deleteTask={deleteTask}
-              toggleTaskComplete={toggleTaskComplete}
-              defaultReminderMinutes={defaultReminderMinutes}
-            />
-          </div>
-        ) : (
-          /* Actual Interactive Product Applet */
-          <div className="space-y-6">
-
-            {/* Warning regarding the 3-tasks cap */}
-            {priorityLimitWarning && (
-              <motion.div 
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="bg-amber-500/10 border border-amber-500/30 text-amber-500 px-4 py-3 rounded-xl flex items-center justify-between text-xs font-semibold backdrop-blur"
+      {/* 🚀 PRIMARY CANVAS CONTAINER WITH SMOOTH SLIDE-IN TRANSITIONS */}
+      <main className="flex-1 flex flex-col md:pl-64 min-w-0 min-h-screen">
+        <div className="flex-1 p-4 sm:p-6 lg:p-8 relative max-w-5xl w-full mx-auto">
+          
+          <AnimatePresence mode="wait">
+            
+            {/* VIEW MODE 1: TODO LIST VIEW (📋 TAREFAS) */}
+            {viewMode === 'tarefas' && (
+              <motion.div
+                key="tab-tarefas"
+                initial={{ opacity: 0, x: 25 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -25 }}
+                transition={{ duration: 0.25, ease: 'easeInOut' }}
+                className="space-y-6"
               >
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">⚠️</span>
-                  <span>{priorityLimitWarning}</span>
-                </div>
-                <button 
-                  onClick={() => setPriorityLimitWarning(null)} 
-                  className="text-[10px] font-black uppercase text-amber-400 hover:text-white"
-                >
-                  OK
-                </button>
-              </motion.div>
-            )}
+                {/* Clean, descriptive title block without excessive text */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-850 pb-5">
+                  <div>
+                    <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2">
+                      <CheckCircle2 className="h-6 w-6 text-amber-500 shrink-0" /> Minhas Tarefas
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-1 font-medium">Gerencie prioridades do seu dia e acumule experiência para avançar de nível.</p>
+                  </div>
 
-            {/* 🎯 JORNADA: SEUS PRINCIPAIS FOCOS */}
-            <div className="rounded-2xl border border-amber-500/20 bg-gradient-to-br from-slate-900/95 to-slate-950 p-5 shadow-lg shadow-amber-500/5 relative overflow-hidden">
-              <div className="absolute top-0 right-0 h-32 w-32 rounded-full bg-amber-500/5 blur-2xl pointer-events-none" />
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
-                <div>
-                  <h3 className="font-sans text-xs font-black text-amber-400 flex items-center gap-2 uppercase tracking-widest">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-md bg-amber-500/10 text-amber-500">
-                      🎯
-                    </span>
-                    Jornada
-                  </h3>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    Defina exatamente 3 itens para manter foco absoluto, planejar o dia com clareza e reduzir a pressa de listas compridas.
-                  </p>
-                </div>
-
-                <button
-                  onClick={() => {
-                    setBreathingPhase('inspire');
-                    setBreathingSecondsLeft(4);
-                    setIsOpeningRitualVisible(true);
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/25 border border-amber-500/20 hover:border-amber-500/40 text-amber-400 hover:text-white font-bold rounded-lg text-[10px] transition-all cursor-pointer uppercase tracking-wider"
-                >
-                  Refazer
-                </button>
-              </div>
-
-              {dayPriorityTasks.length === 0 ? (
-                <div className="text-center py-6 border border-dashed border-slate-850 rounded-xl bg-slate-950/20">
-                  <Star className="h-6 w-6 text-slate-700 mx-auto animate-pulse" />
-                  <p className="text-xs font-semibold text-slate-400 mt-2">Nenhum foco de ouro selecionado hoje.</p>
-                  <p className="text-[10px] text-slate-500 mt-1 max-w-md mx-auto">
-                    Selecione até 3 tarefas prioritárias clicando nas estrelas (⭐) dos cards ou defina os seus objetivos diarios.
-                  </p>
                   <button
-                    onClick={() => setIsOpeningRitualVisible(true)}
-                    className="mt-3 inline-flex items-center gap-1 py-1 px-3 bg-amber-500 text-slate-950 font-black rounded-lg text-[10px] hover:bg-amber-400 transition-colors uppercase cursor-pointer"
+                    onClick={() => handleOpenCreateModal()}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 font-extrabold text-xs px-4.5 py-3 shadow-lg shadow-amber-500/10 hover:brightness-110 active:scale-[0.98] transition-all cursor-pointer uppercase tracking-wider border-0"
                   >
-                    Novo
+                    <Plus className="h-4 w-4 stroke-[3]" /> Nova Tarefa
                   </button>
                 </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {dayPriorityTasks.map((task) => {
-                    const progressVal = task.subtasks && task.subtasks.length > 0 
-                      ? Math.round((task.subtasks.filter(s => s.completed).length / task.subtasks.length) * 100) 
-                      : null;
 
-                    return (
-                      <div 
-                        key={task.id}
-                        onClick={() => handleOpenEditModal(task)}
-                        className={`group relative rounded-xl border p-4 transition-all cursor-pointer flex flex-col justify-between ${
-                          task.completed
-                            ? 'bg-emerald-500/5 border-emerald-500/20 text-slate-500 opacity-75'
-                            : 'bg-slate-950/50 hover:bg-slate-900 border-amber-500/10 hover:border-amber-500/30 text-slate-100 shadow-md'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="rounded-full bg-slate-900 px-1.5 py-0.5 font-mono text-[8px] font-bold text-slate-400 border border-slate-800 uppercase tracking-widest">
-                              {task.category}
-                            </span>
-                            <div className="flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                              {/* Star pin toggle inside card */}
-                              <button
-                                onClick={(e) => handleTogglePriorityDay(task, e)}
-                                className="h-5 w-5 flex items-center justify-center text-amber-400 hover:text-amber-300 transition-colors cursor-pointer"
-                                title="Remover do Top 3 Prioridades"
-                              >
-                                <Star className="h-3.5 w-3.5 fill-current" />
-                              </button>
-
-                              {/* Toggle complete button */}
-                              <button
-                                onClick={() => toggleTaskComplete(task.id)}
-                                onMouseEnter={playHoverTickSound}
-                                className={`group/tooltip relative flex h-4.5 w-4.5 items-center justify-center rounded border ${
-                                  task.completed 
-                                    ? 'bg-amber-500 border-amber-500 text-slate-950' 
-                                    : 'border-slate-800 bg-slate-950 hover:border-amber-500/40'
-                                } cursor-pointer`}
-                              >
-                                {/* Tooltip */}
-                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 pointer-events-none opacity-0 scale-90 group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100 transition-all duration-150 z-50">
-                                  <div className="bg-slate-950 text-slate-200 border border-slate-800 text-[10px] font-medium px-2 py-1 rounded shadow-lg whitespace-nowrap leading-none select-none">
-                                    Concluir Tarefa
-                                  </div>
-                                  <div className="w-1.5 h-1.5 bg-slate-950 border-r border-b border-slate-800 rotate-45 mx-auto -mt-1"></div>
-                                </div>
-
-                                <CheckCircle2 className="CheckCircle2 h-3 w-3 opacity-0 pointer-events-none absolute" />
-                                {task.completed && <CheckCircle2 className="CheckCircle2 h-3 w-3 stroke-[3]" />}
-                              </button>
-                            </div>
-                          </div>
-
-                          <h4 className={`text-xs font-bold leading-snug mt-2 line-clamp-2 ${task.completed ? 'line-through text-slate-500' : 'text-slate-100 group-hover:text-amber-400'}`}>
-                            {task.title}
-                          </h4>
-
-                          {task.description && (
-                            <p className="text-[10px] text-slate-500 mt-1 line-clamp-1">
-                              {task.description}
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Checklist Progress if subtasks exist */}
-                        {task.subtasks && task.subtasks.length > 0 && (
-                          <div className="mt-3 pt-2.5 border-t border-slate-900/60 font-mono text-[8px]">
-                            <div className="flex items-center justify-between font-bold text-slate-400 mb-1">
-                              <span>CHECKLIST</span>
-                              <span>{progressVal}%</span>
-                            </div>
-                            <div className="w-full bg-slate-900 rounded-full h-1 overflow-hidden">
-                              <div 
-                                className="bg-amber-500 h-1 transition-all duration-300"
-                                style={{ width: `${progressVal}%` }}
-                              />
-                            </div>
-                          </div>
-                        )}
-                        
-                        <div className="mt-2.5 pt-1.5 border-t border-slate-900/60 flex items-center justify-between font-mono text-[8px] text-slate-650">
-                          <span>🍅 {task.pomodoroCount || 0}/{task.pomodorosTarget || 1} Pomodoro</span>
-                          {task.dueDate && (
-                            <span>📅 {task.dueDate.split('-').slice(1).reverse().join('/')}</span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* 🛠️ CENTRAL DE CONTROLE UNIFICADA */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between shadow-xl">
-              
-              {/* Pesquisa & Filtro Temático de Categorias */}
-              <div className="flex flex-col sm:flex-row gap-3 flex-1">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                  <input
-                    type="text"
-                    placeholder="Buscar metas ou tarefas..."
-                    value={searchQuery}
-                    onChange={(e) => {
-                      const nextVal = e.target.value;
-                      if (searchQuery === '' && nextVal !== '') {
-                        playSearchSound();
-                      }
-                      setSearchQuery(nextVal);
-                    }}
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950 pl-10 pr-4 py-2 text-sm text-slate-300 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500/20 placeholder:text-slate-600 transition-all"
-                  />
-                </div>
-
-                <div className="flex gap-2">
-                  <select
-                    value={categoryFilter}
-                    onChange={(e) => setCategoryFilter(e.target.value)}
-                    className="rounded-xl border border-slate-855 bg-slate-950 px-3.5 py-2 text-xs font-bold text-slate-400 focus:outline-none focus:border-amber-500 cursor-pointer hover:border-slate-700 transition-all min-w-[140px]"
-                  >
-                    <option value="all">📁 Categorias (Todas)</option>
-                    <option value="Estudo">Estudo</option>
-                    <option value="Trabalho">Trabalho</option>
-                    <option value="Pessoal">Pessoal</option>
-                    <option value="Saúde">Saúde</option>
-                    <option value="Finanças">Finanças</option>
-                    <option value="Outros">Outros</option>
-                  </select>
-
-                  {/* Filter Status Selector - Always visible now */}
-                  <select
-                    value={filter}
-                    onChange={(e) => setFilter(e.target.value)}
-                    className="rounded-xl border border-slate-850 bg-slate-950 px-3.5 py-2 text-xs font-bold text-slate-400 focus:outline-none focus:border-amber-500 cursor-pointer hover:border-slate-700 transition-all min-w-[110px]"
-                  >
-                    <option value="all">🔍 Todas Situações</option>
-                    <option value="pending">Abertas</option>
-                    <option value="completed">Concluídas</option>
-                    <option value="today">Hoje</option>
-                    <option value="high">Alta Prioridade</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Botão de Criação de Tarefa */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-                {/* Primary task creation CTA button */}
-                <button
-                  onClick={handleOpenCreateModal}
-                  className="flex items-center justify-center gap-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs px-5 py-2.5 cursor-pointer shadow-lg shadow-amber-500/10 transition-all active:scale-[0.98] uppercase tracking-wider shrink-0"
-                >
-                  <Plus className="h-4 w-4 stroke-[2.5]" /> Criar Tarefa
-                </button>
-              </div>
-
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-              
-              {/* Left Column: Tasks index, Filters, Searches */}
-              <div className="lg:col-span-7 space-y-6">
-                <>
-
-              {/* Status and Action Row */}
-              {tasks.length > 0 && (
-                <div className="flex items-center justify-between px-1 text-xs">
-                  <span className="text-slate-400 font-semibold font-sans">
-                    Mostrando <span className="font-bold text-amber-500">{filteredTasks.length}</span> {filteredTasks.length === 1 ? 'tarefa' : 'tarefas'}
-                  </span>
-                  {completedCount > 0 && (
-                    <div className="flex gap-2">
-                      <button
-                        onClick={exportCompletedTasksToCSV}
-                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-emerald-500/20 bg-emerald-500/5 text-emerald-400 hover:bg-emerald-500/15 hover:border-emerald-500/40 active:scale-[0.98] transition-all font-bold cursor-pointer"
-                        title="Exportar todas as tarefas concluídas para um arquivo CSV"
-                      >
-                        <Download className="h-3.5 w-3.5 text-emerald-400" />
-                        <span>Exportar CSV</span>
-                      </button>
-
-                      <button
-                        onClick={clearCompletedTasks}
-                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-400 hover:bg-rose-500/15 hover:border-rose-500/40 active:scale-[0.98] transition-all font-bold cursor-pointer"
-                        title="Excluir todas as tarefas marcadas como concluídas do histórico"
-                      >
-                        <Trash2 className="h-3.5 w-3.5 text-rose-400" />
-                        <span>Limpar Completas ({completedCount})</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Tasks List */}
-              <div className="space-y-3">
-                {loading ? (
-                  <div className="text-center py-12 border border-dashed border-slate-800 rounded-xl">
-                    <RefreshCw className="h-6 w-6 animate-spin mx-auto text-amber-500" />
-                    <p className="text-xs text-slate-400 mt-2">Carregando persistência do cache local...</p>
+                {/* SEARCH & FILTERS BOX: BEAUTIFUL, CLEAN BUTTON ALIGNMENTS */}
+                <div className="bg-slate-900 border border-slate-850 rounded-2xl p-4 flex flex-col lg:flex-row gap-3 shadow-xl transition-all duration-200">
+                  {/* Search text input */}
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Filtrar tarefas..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full rounded-xl border border-slate-800 bg-slate-950 pl-10 pr-4 py-2.5 text-xs text-slate-200 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500/20 placeholder:text-slate-500 transition-all"
+                    />
                   </div>
-                ) : filteredTasks.length === 0 ? (
-                  <div className="text-center py-16 border-2 border-dashed border-slate-900 rounded-2xl bg-slate-900/10">
-                    <CheckCircle className="h-9 w-9 text-slate-700 mx-auto" />
-                    <p className="text-sm font-semibold text-slate-300 mt-3">Você não possui tarefas pendentes nesta categoria!</p>
-                    <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-                      Crie novas tarefas com prioridades diferenciadas para avançar níveis e testar os alertas audíveis.
-                    </p>
-                    <button
-                      onClick={handleOpenCreateModal}
-                      className="mt-4 inline-flex items-center gap-1 text-xs font-bold text-amber-500 hover:text-amber-400"
+
+                  {/* Category Filter */}
+                  <div className="flex flex-wrap gap-2 sm:flex-nowrap">
+                    <select
+                      value={categoryFilter}
+                      onChange={(e) => setCategoryFilter(e.target.value as any)}
+                      className={`rounded-xl border bg-slate-950 px-3 py-2 text-xs font-bold transition-all cursor-pointer focus:outline-none ${
+                        categoryFilter !== 'all' ? 'border-amber-500 text-amber-400' : 'border-slate-800 text-slate-400 hover:border-slate-700'
+                      }`}
                     >
-                      <Plus className="h-3.5 w-3.5" /> Adicionar primeira tarefa
+                      <option value="all">📁 Categorias</option>
+                      <option value="Trabalho">Trabalho</option>
+                      <option value="Estudo">Estudo</option>
+                      <option value="Pessoal">Pessoal</option>
+                      <option value="Saúde">Saúde</option>
+                      <option value="Geral">Geral</option>
+                    </select>
+
+                    {/* Priority Filter */}
+                    <select
+                      value={priorityFilter}
+                      onChange={(e) => setPriorityFilter(e.target.value as any)}
+                      className={`rounded-xl border bg-slate-950 px-3 py-2 text-xs font-bold transition-all cursor-pointer focus:outline-none ${
+                        priorityFilter !== 'all' ? 'border-amber-500 text-amber-400' : 'border-slate-800 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      <option value="all">⚡ Prioridade</option>
+                      <option value="high">Altíssima</option>
+                      <option value="medium">Média</option>
+                      <option value="low">Leve</option>
+                    </select>
+
+                    {/* Toggle completed visibility */}
+                    <button
+                      onClick={() => setShowCompleted(prev => !prev)}
+                      className={`px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                        showCompleted 
+                          ? 'bg-slate-800 text-slate-250 border-slate-700' 
+                          : 'bg-slate-950 text-slate-500 border-slate-800 hover:bg-slate-900'
+                      }`}
+                    >
+                      <Filter className="h-3 w-3" />
+                      <span>{showCompleted ? 'Ocular Concluídas' : 'Mostrar Concluídas'}</span>
                     </button>
                   </div>
-                ) : (
-                  <AnimatePresence mode="popLayout">
-                    {filteredTasks.map((task) => {
-                      const isOverdue = task.dueDate && !task.completed && new Date(task.dueDate) < new Date(new Date().toISOString().split('T')[0]);
-                      
-                      let priorityBadgeColor = '';
-                      let priorityLabel = '';
-                      if (task.priority === 'high') {
-                        priorityBadgeColor = 'bg-rose-500/15 text-rose-400 border-rose-500/20';
-                        priorityLabel = 'Lendária (+70 XP)';
-                      } else if (task.priority === 'medium') {
-                        priorityBadgeColor = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
-                        priorityLabel = 'Média (+50 XP)';
-                      } else {
-                        priorityBadgeColor = 'bg-emerald-500/10 text-emerald-400 border-emerald-505/20';
-                        priorityLabel = 'Fácil (+40 XP)';
-                      }
+                </div>
 
+                {/* TASK ITEMS LIST CONTAINER */}
+                <div className="space-y-3">
+                  {filteredTasks.length === 0 ? (
+                    <div className="text-center py-12 rounded-2xl bg-slate-900 border border-dashed border-slate-800">
+                      <AlertCircle className="h-8 w-8 text-slate-600 mx-auto mb-2 animate-pulse" />
+                      <p className="text-sm font-bold text-slate-400">Nenhuma tarefa encontrada.</p>
+                      <p className="text-[11px] text-slate-500 mt-1 max-w-xs mx-auto">Você pode criar uma nova tarefa pelo botão no menu ou topo de página.</p>
+                    </div>
+                  ) : (
+                    filteredTasks.map((task) => {
+                      const completedCount = task.subtasks.filter(s => s.completed).length;
+                      const hasSubtasks = task.subtasks.length > 0;
                       return (
                         <motion.div
                           key={task.id}
                           layout
-                          initial={{ opacity: 0, x: -15 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={task.completed ? { opacity: 0, y: 15 } : { opacity: 0, x: 100 }}
-                          transition={{ duration: 0.25, ease: 'easeInOut' }}
-                          onClick={() => handleOpenEditModal(task)}
-                          className={`group relative flex items-start gap-4 rounded-xl border p-4 transition-all cursor-pointer ${
-                            task.completed
-                              ? 'bg-slate-900/15 border-slate-900 text-slate-550 hover:bg-slate-900/25 hover:border-slate-800'
-                              : task.isSynced && task.googleEventId
-                                ? 'bg-slate-900/90 border-cyan-500/80 text-slate-200 shadow-[0_0_12px_rgba(6,182,212,0.25)] hover:bg-slate-850 hover:shadow-[0_0_15px_rgba(6,182,212,0.35)]'
-                                : 'bg-slate-900 hover:bg-slate-850 hover:border-slate-700 text-slate-200 hover:shadow-md'
-                          } ${activeTaskId === task.id ? 'ring-2 ring-amber-500/50' : ''}`}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          className={`group rounded-2xl bg-slate-900 border p-4.5 sm:p-5 shadow-sm transition-all duration-150 ${
+                            task.completed 
+                              ? 'border-slate-850/60 opacity-60 bg-slate-950' 
+                              : 'border-slate-800 hover:border-slate-650 hover:shadow-lg'
+                          }`}
                         >
-                          <div className="flex flex-col gap-2.5 flex-shrink-0 items-center justify-start mt-1">
-                            {/* Custom Interactive Checkbox */}
-                            <motion.button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleTaskComplete(task.id);
-                              }}
-                              onMouseEnter={playHoverTickSound}
-                              whileHover={{ scale: 1.15 }}
-                              whileTap={{ scale: 0.85 }}
-                              transition={{ type: 'spring', stiffness: 500, damping: 15 }}
-                              title={task.completed ? 'Desmarcar como pendente' : 'Marcar como concluída'}
-                              className="group/tooltip relative flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border text-slate-900 transition-colors cursor-pointer"
-                              style={{
-                                backgroundColor: task.completed ? '#f59e0b' : 'transparent',
-                                borderColor: task.completed ? '#f59e0b' : '#334155',
-                              }}
-                            >
-                              {/* Tooltip */}
-                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 pointer-events-none opacity-0 scale-90 group-hover/tooltip:opacity-100 group-hover/tooltip:scale-100 transition-all duration-150 z-50">
-                                <div className="bg-slate-950 text-slate-200 border border-slate-800 text-[10px] font-medium px-2 py-1 rounded shadow-lg whitespace-nowrap leading-none select-none">
-                                  Concluir Tarefa
-                                </div>
-                                <div className="w-1.5 h-1.5 bg-slate-950 border-r border-b border-slate-800 rotate-45 mx-auto -mt-1"></div>
-                              </div>
-
-                              <CheckCircle2 className="CheckCircle2 h-3.5 w-3.5 opacity-0 pointer-events-none absolute" />
-                              <AnimatePresence>
-                                {task.completed && (
-                                  <motion.div
-                                    initial={{ scale: 0, rotate: -360 }}
-                                    animate={{ scale: 1, rotate: 0 }}
-                                    exit={{ scale: 0, rotate: -360 }}
-                                    transition={{ type: 'spring', stiffness: 450, damping: 15 }}
-                                    className="flex items-center justify-center"
-                                  >
-                                    <CheckCircle2 className="CheckCircle2 h-3.5 w-3.5 text-[#020617] stroke-[3]" />
-                                  </motion.div>
-                                )}
-                              </AnimatePresence>
-                            </motion.button>
-
-                            {/* Ouro / Star priority toggle */}
-                            <motion.button
-                              type="button"
-                              onClick={(e) => handleTogglePriorityDay(task, e)}
-                              whileHover={{ scale: 1.15 }}
-                              whileTap={{ scale: 0.85 }}
-                              className={`flex h-5 w-5 items-center justify-center rounded-md border text-[10px] cursor-pointer transition-colors ${
-                                task.isPriorityDay 
-                                  ? 'bg-amber-500/25 border-amber-400 text-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.2)] font-black' 
-                                  : 'bg-slate-950 border-slate-850 text-slate-550 hover:text-slate-350 hover:border-slate-700'
+                          <div className="flex items-start gap-3.5">
+                            {/* Complete trigger with CSS matching ID `.group button:has(svg.CheckCircle2)` */}
+                            <button
+                              onClick={() => handleToggleTask(task.id)}
+                              className={`group shrink-0 h-5.5 w-5.5 rounded-lg flex items-center justify-center transition-all duration-200 border cursor-pointer ${
+                                task.completed
+                                  ? 'bg-amber-500 border-amber-500 text-slate-950'
+                                  : 'border-slate-700 bg-slate-950 hover:border-amber-500 hover:bg-amber-500/10'
                               }`}
-                              title={task.isPriorityDay ? "Remover das Prioridades do Dia" : "Marcar como Foco do Dia"}
                             >
-                              <Star className={`h-3 w-3 ${task.isPriorityDay ? 'fill-current' : ''}`} />
-                            </motion.button>
-                          </div>
+                              <CheckCircle2 className={`CheckCircle2 h-4 w-4 transition-transform duration-200 ${
+                                task.completed ? 'scale-100' : 'scale-0'
+                              }`} />
+                            </button>
 
-                          <div className="flex-1 min-w-0 space-y-1.5">
-                            {/* Title & Badge details */}
-                            <div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                {/* Category Badge */}
-                                <span className="rounded-full bg-slate-950 px-2 py-0.5 font-mono text-[9px] font-bold text-slate-400 uppercase border border-slate-850">
+                            <div className="flex-1 min-w-0">
+                              {/* Header info line */}
+                              <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold text-slate-450 uppercase tracking-widest mb-1.5">
+                                <span className={`px-2 py-0.5 rounded-md border ${getCategoryColor(task.category)}`}>
                                   {task.category}
                                 </span>
-
-                                {/* Priority indicator */}
-                                <span className={`rounded-md border px-2 py-0.5 font-sans text-[9px] font-semibold uppercase tracking-wider ${priorityBadgeColor}`}>
-                                  {priorityLabel}
-                                </span>
-
-                                {/* Synchronized status indicators list */}
-                                {!task.isSynced && (() => {
-                                  const queueEntry = SyncQueueDB.getEntries().find(e => e.taskId === task.id);
-                                  if (queueEntry && queueEntry.attempts > 0) {
-                                    return (
-                                      <span
-                                        className="flex items-center gap-1 text-[9px] font-black text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20 uppercase cursor-pointer animate-pulse"
-                                        title={`Erro: ${queueEntry.lastError || 'Falha de rede'} - Próxima retentativa: ${queueEntry.nextAttemptAfter ? new Date(queueEntry.nextAttemptAfter).toLocaleTimeString() : 'Imediato'}`}
-                                      >
-                                        <CloudLightning className="h-2.5 w-2.5 text-rose-400" /> erro (repass #{queueEntry.attempts})
-                                      </span>
-                                    );
-                                  }
-                                  return (
-                                    <span
-                                      className="flex items-center gap-0.5 text-[9px] font-bold text-amber-500 uppercase cursor-pointer"
-                                      title="Gravado localmente. Pendente de sincronização automática com banco na nuvem."
-                                    >
-                                      <CloudLightning className="h-2.5 w-2.5" /> offline
-                                    </span>
-                                  );
-                                })()}
-                              </div>
-
-                              <div className="flex items-center gap-1.5 mt-1.5">
-                                <p className={`font-sans font-semibold text-sm leading-tight ${
-                                  task.completed ? 'line-through text-slate-500' : 'text-slate-100'
-                                }`}>
-                                  {task.title}
-                                </p>
-                                <div className="relative inline-block">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setActiveReminderPopoverTaskId(
-                                        activeReminderPopoverTaskId === task.id ? null : task.id
-                                      );
-                                    }}
-                                    className={`group/bell flex items-center justify-center p-1 rounded-md transition-all hover:bg-slate-800/60 cursor-pointer ${
-                                      task.reminderMinutes !== undefined && task.reminderMinutes > 0
-                                        ? 'text-amber-500'
-                                        : 'text-slate-500 hover:text-slate-300'
-                                    }`}
-                                    title="Ajustar lembrete"
-                                  >
-                                    <Bell 
-                                      className={`h-3.5 w-3.5 flex-shrink-0 ${
-                                        task.reminderMinutes !== undefined && task.reminderMinutes > 0
-                                          ? 'fill-amber-500 text-amber-500'
-                                          : 'text-slate-500'
-                                      }`}
-                                    />
-                                  </button>
-
-                                  {activeReminderPopoverTaskId === task.id && (
-                                    <div 
-                                      onClick={(e) => e.stopPropagation()}
-                                      className="absolute left-0 mt-1.5 z-50 w-44 rounded-xl border border-slate-800 bg-slate-950 p-2 shadow-2xl animate-in fade-in slide-in-from-top-1 duration-150"
-                                    >
-                                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-2 pb-1.5 border-b border-slate-900 flex items-center justify-between">
-                                        <span>Alertar lembrete</span>
-                                      </p>
-                                      <div className="flex flex-col gap-0.5 mt-1.5">
-                                        {[
-                                          { value: 0, label: 'Sem lembrete' },
-                                          { value: 5, label: '5 min antes' },
-                                          { value: 15, label: '15 min antes' },
-                                          { value: 30, label: '30 min antes' },
-                                          { value: 45, label: '45 min antes' },
-                                          { value: 60, label: '1 hora antes' },
-                                          { value: 120, label: '2 horas antes' },
-                                          { value: 1440, label: '1 dia antes' },
-                                        ].map((opt) => {
-                                          const isSelected = (task.reminderMinutes ?? 0) === opt.value;
-                                          return (
-                                            <button
-                                              key={opt.value}
-                                              type="button"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                updateTask(task.id, { reminderMinutes: opt.value });
-                                                setActiveReminderPopoverTaskId(null);
-                                              }}
-                                              className={`w-full text-left font-sans text-xs px-2 py-1.5 rounded-lg transition-colors cursor-pointer flex items-center justify-between ${
-                                                isSelected
-                                                  ? 'bg-amber-500/10 text-amber-400 font-semibold'
-                                                  : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
-                                              }`}
-                                            >
-                                              <span>{opt.label}</span>
-                                              {isSelected && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />}
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Description details */}
-                            {task.description && (
-                              <p className="text-xs text-slate-400 font-sans leading-relaxed line-clamp-2">
-                                {task.description}
-                              </p>
-                            )}
-
-                            {/* Interactive Checklist Subtasks */}
-                            {task.subtasks && task.subtasks.length > 0 && (
-                              <div className="mt-2.5 p-3 rounded-xl bg-slate-950/70 border border-slate-900/80 space-y-2 shadow-inner">
-                                <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 font-mono uppercase tracking-wider">
-                                  <span className="flex items-center gap-1">📋 Subtarefas (Checklist)</span>
-                                  <span className="bg-slate-950 text-amber-500 px-1.5 py-0.5 rounded text-[9px] border border-slate-900">
-                                    {task.subtasks.filter(s => s.completed).length}/{task.subtasks.length} concluídas
-                                  </span>
-                                </div>
                                 
-                                <div className="w-full bg-slate-900 rounded-full h-1 overflow-hidden">
-                                  <div 
-                                    className="bg-amber-500 h-1 transition-all duration-300"
-                                    style={{ width: `${(task.subtasks.filter(s => s.completed).length / task.subtasks.length) * 100}%` }}
-                                  />
-                                </div>
+                                {task.priority === 'high' && (
+                                  <span className="text-red-400 bg-red-400/5 px-1.5 py-0.5 rounded border border-red-500/10 font-black">Alta</span>
+                                )}
+                                {task.priority === 'medium' && (
+                                  <span className="text-amber-500 bg-amber-500/5 px-1.5 py-0.5 rounded border border-amber-500/10">Média</span>
+                                )}
+                                {task.priority === 'low' && (
+                                  <span className="text-emerald-400 bg-emerald-400/5 px-1.5 py-0.5 rounded border border-emerald-500/10">Leve</span>
+                                )}
 
-                                <div className="space-y-1.5 mt-2.5">
-                                  {task.subtasks.map((sub) => (
-                                    <label
-                                      key={sub.id}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                      }}
-                                      className="flex items-center gap-2 text-xs font-sans text-slate-300 hover:text-white transition-colors cursor-pointer select-none py-0.5"
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        checked={sub.completed}
-                                        onChange={() => {
-                                          const updatedSubs = task.subtasks!.map(s => 
-                                            s.id === sub.id ? { ...s, completed: !s.completed } : s
-                                          );
-                                          updateTask(task.id, { subtasks: updatedSubs });
-                                        }}
-                                        className="rounded border-slate-800 text-amber-500 focus:ring-transparent h-3.5 w-3.5 bg-slate-950 focus:outline-none cursor-pointer"
-                                      />
-                                      <span className={sub.completed ? "line-through text-slate-550" : ""}>
-                                        {sub.title}
-                                      </span>
-                                    </label>
-                                  ))}
-                                </div>
+                                {task.dayOfWeek && (
+                                  <span className="text-cyan-400 bg-cyan-400/10 px-2 py-0.5 rounded border border-cyan-400/20 flex items-center gap-1 font-black">
+                                    📅 {task.dayOfWeek}
+                                  </span>
+                                )}
                               </div>
-                            )}
 
-                            {/* Metadata grid rows (Dates, Pomodoros sessions) */}
-                            <div className="flex flex-wrap items-center gap-y-1.5 gap-x-4 pt-1 font-mono text-[10px] text-slate-500 select-none">
-                              {task.dueDate && (
-                                <span className={`flex items-center gap-1 ${isOverdue ? 'text-rose-400' : ''}`}>
-                                  <Calendar className="h-3 w-3" />
-                                  {task.dueDate} {task.dueTime ? `@ ${task.dueTime}` : ''}
-                                  {isOverdue ? ' (Vencido)' : ''}
-                                </span>
-                              )}
-                              <span className="flex items-center gap-1.5">
-                                <span className="text-amber-500 font-sans">🍅</span>
-                                Sessões: {task.pomodoroCount} / {task.pomodorosTarget}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Interactive List Item controls */}
-                          <div className="flex flex-shrink-0 items-center gap-1 self-center opacity-70 group-hover:opacity-100 transition-opacity">
-                            
-                            {/* Link focus task button */}
-                            {!task.completed && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveTaskId(task.id);
-                                  playFocusSound();
-                                  // Scroll to focus widget if view on mobile
-                                  document.getElementById('focus-card-section')?.scrollIntoView({ behavior: 'smooth' });
-                                }}
-                                className={`rounded-lg px-2 py-1 font-sans text-[10px] font-bold uppercase transition-colors uppercase cursor-pointer ${
-                                  activeTaskId === task.id
-                                    ? 'bg-amber-500 text-slate-950 shadow-sm'
-                                    : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                              {/* Title / Description */}
+                              <h3 
+                                onClick={() => handleToggleTask(task.id)}
+                                className={`text-sm sm:text-base font-bold select-none cursor-pointer tracking-tight leading-snug break-words ${
+                                  task.completed ? 'line-through text-slate-500' : 'text-slate-100 group-hover:text-amber-400 transition-colors'
                                 }`}
-                                title="Vincular ao Cronômetro de Foco"
                               >
-                                Focar
+                                {task.title}
+                              </h3>
+
+                              {task.description && (
+                                <p className={`text-xs mt-1 leading-relaxed max-w-3xl ${task.completed ? 'text-slate-650' : 'text-slate-400'}`}>
+                                  {task.description}
+                                </p>
+                              )}
+
+                              {/* Subtasks block */}
+                              {hasSubtasks && (
+                                <div className="mt-3.5 pt-3.5 border-t border-slate-850 space-y-2">
+                                  <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
+                                    <span>SUB-TAREFAS ({completedCount}/{task.subtasks.length})</span>
+                                    <span>{Math.round((completedCount / task.subtasks.length) * 100)}% concluído</span>
+                                  </div>
+                                  <div className="w-full h-1 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                                    <div 
+                                      className="h-full bg-cyan-400" 
+                                      style={{ width: `${(completedCount / task.subtasks.length) * 100}%` }}
+                                    />
+                                  </div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                                    {task.subtasks.map((sub) => (
+                                      <button
+                                        key={sub.id}
+                                        onClick={() => handleToggleSubtask(task.id, sub.id)}
+                                        className={`flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-705 text-left transition-colors cursor-pointer ${
+                                          sub.completed ? 'opacity-65 text-slate-500' : 'text-slate-300'
+                                        }`}
+                                      >
+                                        <div className={`h-4 w-4 shrink-0 rounded flex items-center justify-center border text-[9px] ${
+                                          sub.completed ? 'bg-cyan-500 border-cyan-500 text-slate-950 font-black' : 'border-slate-700 bg-slate-950'
+                                        }`}>
+                                          {sub.completed && <Check className="h-3 w-3 animate-[pulse-scale_0.2s_ease-out]" />}
+                                        </div>
+                                        <span className={`text-[11px] font-medium break-all leading-tight ${sub.completed ? 'line-through' : ''}`}>
+                                          {sub.title}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Item Actions */}
+                            <div className="flex items-center shrink-0 gap-1 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => handleOpenEditModal(task)}
+                                title="Editar"
+                                className="p-1.5 hover:text-white text-slate-500 hover:bg-slate-800/50 rounded-lg transition-colors cursor-pointer border-0 flex items-center justify-center"
+                              >
+                                <Edit3 className="h-4 w-4" />
                               </button>
-                            )}
-
-                            {/* Edit task context icon */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleOpenEditModal(task);
-                              }}
-                              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-850 hover:text-slate-200 transition-colors cursor-pointer"
-                              title="Editar especificações"
-                            >
-                              <Edit3 className="h-3.5 w-3.5" />
-                            </button>
-
-                            {/* Trash delete task context icon */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (confirm('Deseja realmente deletar esta tarefa de seu portfólio MVP?')) {
-                                  deleteTask(task.id);
-                                  if (activeTaskId === task.id) setActiveTaskId(null);
-                                }
-                              }}
-                              className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-500/10 hover:text-rose-400 transition-colors cursor-pointer"
-                              title="Remover do banco"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
+                              <button
+                                onClick={() => handleDeleteTask(task.id)}
+                                title="Deletar"
+                                className="p-1.5 hover:text-red-400 text-slate-500 hover:bg-red-400/15 rounded-lg transition-colors cursor-pointer border-0 flex items-center justify-center"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
                           </div>
                         </motion.div>
                       );
+                    })
+                  )}
+                </div>
+              </motion.div>
+            )}
+
+            {/* VIEW MODE 2: WEEK PLANNING (📅 AGENDA) */}
+            {viewMode === 'agenda' && (() => {
+              const daysOfWeekMap: DayOfWeek[] = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+              const todayDayName = daysOfWeekMap[new Date().getDay()];
+
+              return (
+                <motion.div
+                  key="tab-agenda"
+                  initial={{ opacity: 0, x: 25 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -25 }}
+                  transition={{ duration: 0.25, ease: 'easeInOut' }}
+                  className="space-y-6"
+                >
+                  {/* Title */}
+                  <div className="border-b border-slate-850 pb-5">
+                    <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2.5">
+                      <Calendar className="h-6 w-6 text-cyan-400 shrink-0" /> Agenda Semanal
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-1 font-medium">Sua semana em perspectiva de alta performance. Selecione os dias para detalhar metas programadas.</p>
+                  </div>
+
+                  {/* HORIZONTAL DAYS ROW WITH DYNAMIC INDICATORS & HIGHLIGHT FOR TODAY */}
+                  <div className="flex items-center gap-2 overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-slate-855 scrollbar-track-transparent">
+                    {DAYS_LIST.map((day) => {
+                      const dayTasks = tasks.filter(t => t.dayOfWeek === day);
+                      const completedInDayCount = dayTasks.filter(t => t.completed).length;
+                      const totalInDayCount = dayTasks.length;
+                      
+                      const isToday = day === todayDayName;
+                      const isSelected = day === selectedAgendaDay;
+                      
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          onClick={() => {
+                            playSound('click');
+                            setSelectedAgendaDay(day);
+                          }}
+                          className={`flex-1 min-w-[90px] sm:min-w-[120px] flex flex-col items-center justify-center p-3.5 rounded-2xl border transition-all duration-300 relative cursor-pointer ${
+                            isSelected
+                              ? 'bg-amber-500/10 text-amber-500 border-amber-500/30 shadow-lg shadow-amber-500/5'
+                              : isToday
+                                ? 'bg-slate-905 border-amber-500/40 text-amber-500 hover:border-amber-550/60'
+                                : 'bg-slate-900 border-slate-850 text-slate-400 hover:border-slate-700 hover:text-slate-100'
+                          }`}
+                        >
+                          {/* Little absolute indicator for "HOJE" */}
+                          {isToday && (
+                            <span className="absolute -top-1.5 bg-gradient-to-r from-amber-550 to-yellow-450 text-slate-950 text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full shadow border border-amber-400/20">
+                              hoje
+                            </span>
+                          )}
+
+                          <span className="text-[10px] sm:text-xs font-black tracking-wider uppercase mb-1.5">{day}</span>
+                          
+                          {/* Task counter status dot or number */}
+                          {totalInDayCount > 0 ? (
+                            <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md ${
+                              isSelected 
+                                ? 'bg-amber-500 text-slate-950 font-black' 
+                                : completedInDayCount === totalInDayCount
+                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                  : 'bg-slate-800 text-slate-300'
+                            }`}>
+                              {completedInDayCount}/{totalInDayCount}
+                            </span>
+                          ) : (
+                            <span className="text-[8px] opacity-45">—</span>
+                          )}
+
+                          {/* Animated Underline for Selected Tab */}
+                          {isSelected && (
+                            <motion.div
+                              layoutId="active-agenda-tab"
+                              className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-4 h-1 rounded-full bg-amber-500"
+                              transition={{ type: 'spring', stiffness: 350, damping: 25 }}
+                            />
+                          )}
+                        </button>
+                      );
                     })}
-                  </AnimatePresence>
-                )}
-              </div>
-            </>
-          </div>
-
-        {/* Right Column: Pomodoro focus console, design rules context card */}
-        <div className="lg:col-span-5 space-y-6">
-              
-              {/* Pomodoro Focus Console card */}
-              <div id="focus-card-section">
-                <PomodoroTimer
-                  tasks={tasks}
-                  activeTaskId={activeTaskId}
-                  setActiveTaskId={setActiveTaskId}
-                  onPomodoroComplete={addPomodoroSession}
-                />
-              </div>
-
-
-
-              {/* Tips banner card */}
-              <div className="hidden md:block rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/80 to-slate-950 p-6">
-                <h4 className="flex items-center gap-1.5 font-sans font-bold text-slate-200">
-                  <Zap className="h-4 w-4 text-emerald-400" /> Benefícios do Portfólio de Código
-                </h4>
-                <p className="text-xs text-slate-400 leading-relaxed mt-2">
-                  Esta versão do <strong>Citrino Tarefas</strong> atende a todos os requisitos do <strong>Sprint 1, 2 e 3 do MVP</strong>. Ao concluir tarefas de dificuldades (High / Medium/ Low), os pontos de XP alimentam algoritmicamente sua barra de nível, sintetizando os timbres através dos alto-falantes de forma nativa. 
-                </p>
-                <div className="mt-4 grid grid-cols-2 gap-3 font-sans text-[11px] text-slate-300">
-                  <div className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-850">
-                    <span className="font-bold text-slate-200 block mb-0.5">🚀 Gamificação</span>
-                    +15 XP por criar task, +40-70 por terminar.
                   </div>
-                  <div className="bg-slate-950/40 p-2.5 rounded-xl border border-slate-850">
-                    <span className="font-bold text-slate-200 block mb-0.5">💾 Cache Local</span>
-                    Usa LocalStorage. Resiste a refreshes de página.
-                  </div>
-                </div>
-              </div>
-            </div>
 
-          </div>
-        </div>
-      )}
-      </main>
-
-      {/* Task Creation & Editing Multi-Modal Component */}
-      <TaskModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onSubmit={handleModalSubmit}
-        taskToEdit={taskToEdit}
-        isGoogleConnected={isGoogleConnected}
-        defaultReminderMinutes={defaultReminderMinutes}
-      />
-
-      {/* Gratitude Journal Overlays */}
-      <GratitudeJournal
-        isOpen={isGratitudeOpen}
-        onClose={() => setIsGratitudeOpen(false)}
-        soundEnabled={soundEnabled}
-        playFocusSound={playFocusSound}
-      />
-
-      {/* RITUAL DE ABERTURA DIÁRIO (DAILY RESET IMPERSIVE PORTAL) */}
-      <AnimatePresence>
-        {isOpeningRitualVisible && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/98 backdrop-blur-lg flex items-start md:items-center justify-center p-4 sm:p-6 py-6 sm:py-12"
-          >
-            {/* Ambient gold glow */}
-            <div className="hidden md:block fixed -top-10 -left-10 h-96 w-96 rounded-full bg-amber-500/10 blur-[130px] pointer-events-none" />
-            <div className="hidden md:block fixed -bottom-10 -right-10 h-96 w-96 rounded-full bg-indigo-505/10 blur-[130px] pointer-events-none" />
-
-            <motion.div
-              initial={{ scale: 0.95, y: 15 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.95, y: 15 }}
-              className="w-full max-w-4xl bg-slate-900 border border-amber-500/20 rounded-3xl p-6 sm:p-8 shadow-2xl relative z-10 grid grid-cols-1 md:grid-cols-12 gap-8 items-start"
-            >
-              {/* Left Column: Greeting, Breathing Exercise, Ritual Explanation */}
-              <div className="md:col-span-5 space-y-6">
-                <div>
-                  <span className="text-amber-500 font-mono text-[9px] font-black uppercase tracking-widest bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full">
-                    🌅 Planejar Nova Jornada
-                  </span>
-                  <h2 className="font-sans text-xl sm:text-2xl font-black text-white mt-3 leading-tight tracking-tight uppercase">
-                    Acalme a mente, <br />
-                    <span className="text-amber-400">firme seus alicerces.</span>
-                  </h2>
-                  <p className="text-xs text-slate-400 leading-relaxed mt-2.5">
-                    Definir suas metas diárias traz foco e tranquilidade. Antes de iniciar suas tarefas, tire um momento para respirar conscientemente e selecionar no máximo 3 focos de atenção.
-                  </p>
-                </div>
-
-                {/* VISUAL RESPIRATION GUIDE WIDGET */}
-                <div className="bg-slate-950/80 rounded-2xl border border-slate-800 p-5 text-center relative overflow-hidden">
-                  <span className="text-[9px] font-mono font-bold text-slate-500 tracking-wider">GUIA DE RESPIRAÇÃO (4-4-4)</span>
-                  
-                  {/* Glowing core animation */}
-                  <div className="my-6 flex items-center justify-center">
+                  {/* EXPANDABLE DAY SECTION WITH SMOOTH SLIDE-FADE IN ANIMATION */}
+                  <AnimatePresence mode="wait">
                     <motion.div
-                      animate={{
-                        scale: breathingPhase === 'inspire' ? 1.3 : breathingPhase === 'segure' ? 1.3 : 0.85,
-                        backgroundColor: breathingPhase === 'segure' ? 'rgba(245, 158, 11, 0.25)' : 'rgba(245, 158, 11, 0.15)',
-                        borderColor: breathingPhase === 'segure' ? 'rgba(245, 158, 11, 0.6)' : 'rgba(245, 158, 11, 0.3)'
-                      }}
-                      transition={{ duration: 4, ease: "linear" }}
-                      className="h-24 w-24 rounded-full border-2 flex flex-col items-center justify-center text-amber-500 shadow-inner"
+                      key={selectedAgendaDay}
+                      initial={{ opacity: 0, y: 15 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -15 }}
+                      transition={{ duration: 0.22, ease: 'easeOut' }}
+                      className="bg-slate-900 border border-slate-850 rounded-3xl p-5 sm:p-7 shadow-2xl relative overflow-hidden"
                     >
-                      <span className="text-[10px] font-mono uppercase tracking-widest font-black leading-none">
-                        {breathingSecondsLeft}s
-                      </span>
-                      <span className="text-[8px] font-mono leading-relaxed text-amber-400/80 font-bold uppercase mt-1">
-                        {breathingPhase === 'inspire' ? 'Inspire' : breathingPhase === 'segure' ? 'Segure' : 'Expire'}
-                      </span>
+                      <div className="absolute top-0 right-0 h-40 w-40 rounded-full bg-amber-500/5 blur-3xl pointer-events-none" />
+
+                      {/* Header with Title and Add to Day Action */}
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-850 pb-5 mb-5 select-none text-left">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-sm sm:text-base font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                              📅 {selectedAgendaDay}-feira
+                            </h3>
+                            {selectedAgendaDay === todayDayName && (
+                              <span className="px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-500 text-[9px] font-black uppercase tracking-wider">
+                                HOJE
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-0.5">Metas e rotinas agendadas especificamente para este dia.</p>
+                        </div>
+
+                        <button
+                          onClick={() => handleOpenCreateModal(selectedAgendaDay)}
+                          className="flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl bg-amber-500/10 hover:bg-amber-500 hover:text-slate-950 border border-amber-550/20 hover:border-amber-500 text-amber-500 font-extrabold text-[10px] uppercase tracking-wider transition-all cursor-pointer shadow-sm"
+                        >
+                          <Plus className="h-4 w-4 stroke-[3]" /> Agendar Tarefa
+                        </button>
+                      </div>
+
+                      {/* Task list for selected day */}
+                      <div className="space-y-3.5">
+                        {tasks.filter(t => t.dayOfWeek === selectedAgendaDay).length === 0 ? (
+                          <div className="text-center py-12 border border-dashed border-slate-800 bg-slate-950/20 rounded-2xl">
+                             <Droplet className="h-8 w-8 text-cyan-500/30 mx-auto mb-2.5 animate-bounce" />
+                             <h4 className="text-xs font-bold text-slate-400">Nenhuma meta programada para {selectedAgendaDay}</h4>
+                             <p className="text-[10px] text-slate-500 mt-1 mb-4.5 max-w-xs mx-auto">Mantenha constância equilibrando suas atividades da semana.</p>
+                             <button
+                               onClick={() => handleOpenCreateModal(selectedAgendaDay)}
+                               className="inline-flex items-center gap-1.5 py-2.5 px-4.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-[10px] uppercase cursor-pointer border-0 shadow-md transition-all font-sans"
+                             >
+                               <Plus className="h-4.5 w-4.5 stroke-[3]" /> Agendar Metas
+                             </button>
+                          </div>
+                        ) : (
+                          tasks.filter(t => t.dayOfWeek === selectedAgendaDay).map((t) => {
+                            const completedCount = t.subtasks?.filter(s => s.completed).length || 0;
+                            const hasSubtasks = t.subtasks && t.subtasks.length > 0;
+                            return (
+                              <motion.div
+                                key={t.id}
+                                initial={{ opacity: 0, x: -8 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                className={`p-4 rounded-2xl border transition-all duration-200 text-left ${
+                                  t.completed 
+                                    ? 'bg-slate-955/50 border-slate-850/60 opacity-60' 
+                                    : 'bg-slate-900 border-slate-800 hover:border-slate-650'
+                                }`}
+                              >
+                                <div className="flex items-start gap-3.5">
+                                  <button
+                                    onClick={() => handleToggleTask(t.id)}
+                                    className={`h-5.5 w-5.5 shrink-0 rounded-lg flex items-center justify-center border cursor-pointer transition-colors ${
+                                      t.completed ? 'bg-amber-500 border-amber-500 text-slate-950' : 'border-slate-700 bg-slate-950 hover:border-amber-500'
+                                    }`}
+                                  >
+                                    {t.completed && <Check className="h-3.5 w-3.5" />}
+                                  </button>
+
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2 text-[9px] font-bold text-slate-450 uppercase tracking-widest mb-1.5">
+                                      <span className={`px-2 py-0.5 rounded border ${getCategoryColor(t.category)}`}>
+                                        {t.category}
+                                      </span>
+                                      {t.priority === 'high' && <span className="text-red-400 bg-red-400/5 px-1.5 py-0.5 rounded border border-red-500/10 font-bold">Alta</span>}
+                                      {t.priority === 'medium' && <span className="text-amber-500 bg-amber-500/5 px-1.5 py-0.5 rounded border border-amber-500/10">Média</span>}
+                                      {t.priority === 'low' && <span className="text-emerald-400 bg-emerald-400/5 px-1.5 py-0.5 rounded border border-emerald-500/10">Leve</span>}
+                                    </div>
+
+                                    <h4 
+                                      onClick={() => handleToggleTask(t.id)}
+                                      className={`text-sm sm:text-base font-bold select-none cursor-pointer tracking-tight break-words leading-snug ${
+                                        t.completed ? 'line-through text-slate-500' : 'text-slate-100 hover:text-amber-400 transition-colors'
+                                      }`}
+                                    >
+                                      {t.title}
+                                    </h4>
+
+                                    {t.description && (
+                                      <p className="text-xs text-slate-400 mt-1 leading-relaxed line-clamp-2">{t.description}</p>
+                                    )}
+
+                                    {/* Subtasks block */}
+                                    {hasSubtasks && (
+                                      <div className="mt-3.5 pt-3.5 border-t border-slate-850 space-y-2">
+                                        <div className="flex items-center justify-between text-[9px] font-bold text-slate-400">
+                                          <span>SUB-TAREFAS ({completedCount}/{t.subtasks.length})</span>
+                                          <span>{Math.round((completedCount / t.subtasks.length) * 100)}%</span>
+                                        </div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                          {t.subtasks.map((sub) => (
+                                            <button
+                                              key={sub.id}
+                                              onClick={() => handleToggleSubtask(t.id, sub.id)}
+                                              className="flex items-center gap-2 p-2 rounded-xl bg-slate-950 border border-slate-800 text-left cursor-pointer hover:border-slate-700"
+                                            >
+                                              <div className={`h-4 w-4 shrink-0 rounded flex items-center justify-center border text-[9px] ${
+                                                sub.completed ? 'bg-cyan-550 border-cyan-550 text-slate-950 font-black' : 'border-slate-700 bg-slate-950'
+                                              }`}>
+                                                {sub.completed && <Check className="h-3 w-3" />}
+                                              </div>
+                                              <span className="text-[10px] truncate max-w-[120px]">{sub.title}</span>
+                                            </button>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center shrink-0 gap-1 pl-2">
+                                    <button
+                                      onClick={() => handleOpenEditModal(t)}
+                                      title="Editar"
+                                      className="p-2 hover:text-white text-slate-500 hover:bg-slate-800/40 rounded-lg transition-colors border-0 cursor-pointer flex items-center justify-center"
+                                    >
+                                      <Edit3 className="h-3.8 w-3.8" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteTask(t.id)}
+                                      title="Deletar"
+                                      className="p-2 hover:text-red-400 text-slate-500 hover:bg-red-400/15 rounded-lg transition-colors border-0 cursor-pointer"
+                                    >
+                                      <Trash2 className="h-3.8 w-3.8" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            );
+                          })
+                        )}
+                      </div>
                     </motion.div>
-                  </div>
+                  </AnimatePresence>
+                </motion.div>
+              );
+            })()}
 
-                  <p className="text-[11px] text-slate-400 leading-normal italic px-2">
-                    {breathingPhase === 'inspire' && '"Inspire clareza e controle na sua rotina."'}
-                    {breathingPhase === 'segure' && '"Foque na retenção, sinta-se presente hoje."'}
-                    {breathingPhase === 'expire' && '"Solte toda a pressão e ansiedade acumulada."'}
-                  </p>
+            {/* VIEW MODE 3: PROGRESS / LEVEL SYSTEM (📊 PROGRESSO) */}
+            {viewMode === 'progresso' && (
+              <motion.div
+                key="tab-progresso"
+                initial={{ opacity: 0, x: 25 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -25 }}
+                transition={{ duration: 0.25, ease: 'easeInOut' }}
+                className="space-y-6"
+              >
+                {/* Title */}
+                <div className="border-b border-[#141C31] pb-5">
+                  <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2.5">
+                    <TrendingUp className="h-6 w-6 text-emerald-400 shrink-0" /> Progresso & Nivel
+                  </h2>
+                  <p className="text-xs text-slate-410 mt-1 font-medium">Monitore suas estatísticas gerais de produtividade e mantenha constância de hábitos.</p>
                 </div>
 
-                <div className="hidden md:flex bg-slate-950/40 p-3 rounded-xl border border-slate-850/60 font-mono text-[9px] text-slate-550 leading-normal items-start gap-1.5">
-                  <span className="text-amber-500">💡</span>
-                  <span>O cérebro trabalha melhor focando em progresso contínuo de 3 metas principais por dia do que em infinitos checkboxes vazios.</span>
-                </div>
-              </div>
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 select-none">
+                  {/* Left big card - Overview HUD */}
+                  <div className="md:col-span-4 bg-[#0E1528] rounded-2xl border border-[#19274A] p-6 text-center flex flex-col justify-between relative overflow-hidden">
+                    <div className="absolute top-0 right-0 h-40 w-40 rounded-full bg-emerald-500/5 blur-3xl pointer-events-none" />
+                    
+                    <div>
+                      <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-4">Sua Graduação Citrino</span>
+                      <div className="text-4xl font-black font-mono tracking-tighter text-white block mb-1">Level {level}</div>
+                      <span className="text-xs font-bold text-slate-350 bg-[#16213D] border border-[#233561] px-3.5 py-1.5 rounded-full inline-block mb-6">
+                        Produtor Autônomo
+                      </span>
+                    </div>
 
-              {/* Right Column: Dynamic Core Priority Selector & Quick Adder */}
-              <div className="md:col-span-7 flex flex-col h-full justify-between space-y-6">
-                <div>
-                  <h3 className="font-sans text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5 mb-1">
-                    🎯 Selecione seus Focos Principais
-                  </h3>
-                  <p className="text-[11px] text-slate-500 leading-relaxed mb-4">
-                    Marque até 3 metas como o Foco Principal de hoje. Elas serão exibidas no topo do seu painel para acesso rápido.
-                  </p>
+                    <div className="space-y-3.5 pt-6 border-t border-[#182342]">
+                      <div className="text-left">
+                        <div className="flex justify-between text-[11px] font-bold text-slate-400 mb-1">
+                          <span>Progresso do Nível</span>
+                          <span>{xpInCurrentLevel}%</span>
+                        </div>
+                        <div className="w-full h-2.5 bg-[#070B14] rounded-full overflow-hidden border border-[#16223F]">
+                          <div className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400" style={{ width: `${xpInCurrentLevel}%` }} />
+                        </div>
+                      </div>
 
-                  {/* Active selection counters indicator */}
-                  <div className="flex items-center justify-between text-xs font-mono font-bold px-1 mb-2">
-                    <span className="text-slate-400">Focos Ativos Selecionados:</span>
-                    <span className={`px-2 py-0.5 rounded ${dayPriorityTasks.length === 3 ? 'bg-amber-500/20 text-amber-400' : 'bg-slate-950 text-slate-500'}`}>
-                      {dayPriorityTasks.length}/3 Metas
-                    </span>
+                      <p className="text-[11px] text-slate-400 text-left leading-relaxed">
+                        Complete tarefas, check-lists ou organize sua semana para acumular mais experiência. Nossos algoritmos gamificados de foco auxiliam na neuroplasticidade da produtividade!
+                      </p>
+                    </div>
                   </div>
 
-                  {/* Quick-Task addition board inside Ritual */}
-                  <form onSubmit={handleCreateQuickTaskInRitual} className="bg-slate-950/90 rounded-2xl border border-slate-800 p-4 mb-4 space-y-3">
-                    <span className="text-[9px] font-mono font-bold text-slate-500 block">ADICIONAR META RÁPIDA DE FOCO</span>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="Digite o título da sua principal prioridade..."
-                        value={ritualNewTaskTitle}
-                        onChange={(e) => setRitualNewTaskTitle(e.target.value)}
-                        className="flex-1 rounded-xl border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 focus:border-amber-500 focus:outline-none placeholder:text-slate-650"
-                      />
-                      <button
-                        type="submit"
-                        disabled={!ritualNewTaskTitle.trim()}
-                        className="px-3 py-1.5 bg-amber-500 disabled:opacity-50 text-slate-950 font-black rounded-xl text-xs hover:bg-amber-400 cursor-pointer flex items-center gap-1"
+                  {/* Right - Stat counters */}
+                  <div className="md:col-span-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="bg-[#0E1528] border border-[#141D32] p-5 rounded-2xl">
+                      <span className="text-[10px] font-black text-[#6C85BA] uppercase tracking-widest block mb-1">Metas Totais Cadastradas</span>
+                      <div className="text-3xl font-black text-white">{tasks.length}</div>
+                      <p className="text-[11px] text-[#415582] mt-2">Histórico completo de toda sua meta local registrada.</p>
+                    </div>
+
+                    <div className="bg-[#0E1528] border border-[#141D32] p-5 rounded-2xl">
+                      <span className="text-[10px] font-black text-[#50DEAA] uppercase tracking-widest block mb-1">Metas Finalizadas</span>
+                      <div className="text-3xl font-black text-emerald-400">{tasks.filter(t => t.completed).length}</div>
+                      <p className="text-[11px] text-slate-400 mt-2">Foco e resiliência transformados em objetivos executados.</p>
+                    </div>
+
+                    <div className="bg-[#0E1528] border border-[#141D32] p-5 rounded-2xl">
+                      <span className="text-[10px] font-black text-[#4CCCE9] uppercase tracking-widest block mb-1">Média de Conclusão</span>
+                      <div className="text-3xl font-black text-slate-200">
+                        {tasks.length > 0 ? Math.round((tasks.filter(t => t.completed).length / tasks.length) * 100) : 0}%
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-2">Porcentagem global de produtividade e execução diária.</p>
+                    </div>
+
+                    <div className="bg-[#0E1528] border border-[#141D32] p-5 rounded-2xl flex flex-col justify-between">
+                      <div>
+                        <span className="text-[10px] font-black text-yellow-500 uppercase tracking-widest block mb-1">Estimador de XP de metas</span>
+                        <p className="text-[11px] text-slate-400 leading-relaxed mt-1">
+                          Próxima meta de alta prioridade concederá <strong className="text-amber-500">+45 XP</strong> caso realizada com sucesso!
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Inspirational motivational quotes block */}
+                <div className="bg-[#121A30]/50 border border-[#1B294C] rounded-2xl p-5 flex items-start gap-4">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20 text-lg">
+                    💡
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <h4 className="text-xs font-bold text-white uppercase tracking-wider">FRASE DE EFICIÊNCIA DIÁRIA</h4>
+                    <p className="text-xs text-slate-300 italic leading-relaxed">
+                      "A simplicidade de planejar o seu dia em pequenas porções evita a ansiedade do acúmulo e pavimenta um caminho de resultados consistentes. Foque nas próximas horas!"
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* VIEW MODE 4: CONFIGURATIONS (⚙️ CONFIGURAÇÕES) */}
+            {viewMode === 'configuracoes' && (
+              <motion.div
+                key="tab-configuracoes"
+                initial={{ opacity: 0, x: 25 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -25 }}
+                transition={{ duration: 0.25, ease: 'easeInOut' }}
+                className="space-y-6"
+              >
+                {/* Title */}
+                <div className="border-b border-slate-850 pb-5">
+                  <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2.5">
+                    <Settings className="h-6 w-6 text-slate-400 shrink-0" /> Configurações do Citrino
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-1 font-medium">Configure as propriedades do seu workspace local, banco de dados e preferências gerais.</p>
+                </div>
+
+                <div className="space-y-4 max-w-2xl select-none">
+                  {/* Preferences block */}
+                  <div className="bg-slate-900 rounded-2xl border border-slate-850 p-5 space-y-4">
+                    <h3 className="text-xs font-black text-white uppercase tracking-wider pb-2 border-b border-slate-850">Preferências Gerais</h3>
+                    
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-bold text-slate-250 block">Sons de Notificação de Tarefas</span>
+                        <span className="text-[10px] text-slate-500 block block">Emite bipes sintéticos de feedback ao cumprir metas.</span>
+                      </div>
+                      <button 
+                        onClick={() => playSound('check')}
+                        className="px-3.5 py-2 rounded-xl bg-slate-950 text-xs font-bold text-slate-400 border border-slate-800 hover:text-white transition-colors cursor-pointer"
                       >
-                        <Plus className="h-3.5 w-3.5" /> Adicionar
+                        Testar Áudio 🔊
                       </button>
                     </div>
 
-                    <div className="flex gap-3 justify-between items-center pt-1 text-[10px]">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-slate-500">Categoria:</span>
-                        <select
-                          value={ritualNewTaskCategory}
-                          onChange={(e) => setRitualNewTaskCategory(e.target.value)}
-                          className="bg-slate-900 text-slate-350 border border-slate-850 rounded px-1.5 py-0.5 focus:outline-none focus:border-amber-500 text-[10px]"
-                        >
-                          <option value="Estudo">Estudo</option>
-                          <option value="Trabalho">Trabalho</option>
-                          <option value="Pessoal">Pessoal</option>
-                          <option value="Saúde">Saúde</option>
-                        </select>
+                    <div className="flex items-center justify-between pt-4 border-t border-slate-850">
+                      <div>
+                        <span className="text-xs font-bold text-slate-205 block">Plano de Fundo Dinâmico</span>
+                        <span className="text-[10px] text-slate-500 block">Sincronizado automaticamente com o tema noturno do Citrino.</span>
                       </div>
-
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-slate-500">Pontos Estrelados:</span>
-                        <select
-                          value={ritualNewTaskPriority}
-                          onChange={(e) => setRitualNewTaskPriority(e.target.value as TaskPriority)}
-                          className="bg-slate-900 text-slate-350 border border-slate-850 rounded px-1.5 py-0.5 focus:outline-none focus:border-amber-500 text-[10px]"
-                        >
-                          <option value="low">Fácil (+40 XP)</option>
-                          <option value="medium">Média (+50 XP)</option>
-                          <option value="high">Lendária (+70 XP)</option>
-                        </select>
-                      </div>
+                      <span className="px-2 py-1 rounded bg-slate-900 border border-slate-800 text-[9px] font-black tracking-widest text-[#50DEAA] uppercase">
+                        ATIVADO
+                      </span>
                     </div>
-                  </form>
+                  </div>
 
-                  {/* Pending Tasks / Recommendations selector list */}
-                  <div className="space-y-2 overflow-y-auto max-h-[220px] pr-1.5">
-                    {tasks.filter(t => !t.completed).length === 0 ? (
-                      <div className="text-center py-6 border border-dashed border-slate-800 rounded-xl">
-                        <p className="text-xs text-slate-500">Seu banco de ideias está vazio. Crie uma meta rápida acima!</p>
-                      </div>
-                    ) : (
-                      tasks.filter(t => !t.completed).map((task) => {
-                        return (
-                          <div
-                            key={task.id}
-                            onClick={() => {
-                              if (!task.isPriorityDay && dayPriorityTasks.length >= 3) return;
-                              updateTask(task.id, { isPriorityDay: !task.isPriorityDay });
-                              if (soundEnabled) playHoverTickSound();
-                            }}
-                            className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
-                              task.isPriorityDay
-                                ? 'bg-amber-500/10 border-amber-500/30 text-white'
-                                : 'bg-slate-950/40 border-slate-850 hover:bg-slate-950/90 text-slate-400 hover:text-slate-300'
-                            }`}
-                          >
-                            <div className="min-w-0 pr-3">
-                              <span className="rounded-full bg-slate-900 px-1.5 py-0.5 text-[8px] font-mono border border-slate-800 uppercase text-slate-500">
-                                {task.category}
-                              </span>
-                              <h5 className={`text-xs font-bold leading-tight mt-1 line-clamp-1 ${task.isPriorityDay ? 'text-amber-400' : ''}`}>
-                                {task.title}
-                              </h5>
-                            </div>
+                  {/* Backups & Resets */}
+                  <div className="bg-slate-900 rounded-2xl border border-slate-850 p-5 space-y-4">
+                    <h3 className="text-xs font-black text-white uppercase tracking-wider pb-2 border-b border-slate-850">Zona de Perigo & Reinicialização</h3>
 
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (!task.isPriorityDay && dayPriorityTasks.length >= 3) {
-                                  alert("Máximo de 3 tarefas atingido!");
-                                  return;
-                                }
-                                updateTask(task.id, { isPriorityDay: !task.isPriorityDay });
-                                if (soundEnabled) playHoverTickSound();
-                              }}
-                              className={`h-6 w-6 flex items-center justify-center rounded-lg border text-xs ${
-                                task.isPriorityDay 
-                                  ? 'bg-amber-500 text-slate-950 border-amber-500' 
-                                  : 'border-slate-850 bg-slate-950 text-slate-650 hover:bg-slate-900 hover:text-slate-400'
-                              }`}
-                            >
-                              <Star className={`h-3.5 w-3.5 ${task.isPriorityDay ? 'fill-current' : ''}`} />
-                            </button>
-                          </div>
-                        );
-                      })
-                    )}
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Caso o seu navegador esteja desatualizado ou as informações de sincronização entrem em conflito, você poderá apagar as chaves locais para recomeçar o Citrino Planner.
+                    </p>
+
+                    <button
+                      onClick={handleResetApp}
+                      className="px-4 py-2.5 bg-red-400/10 hover:bg-red-400/20 border border-red-500/20 hover:border-red-500/40 text-red-400 font-extrabold text-[10px] rounded-xl tracking-wider uppercase transition-all cursor-pointer"
+                    >
+                      Reiniciar Todo o Projeto ☠️
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+          </AnimatePresence>
+
+        </div>
+      </main>
+
+      {/* ========================================================================= */}
+      {/* 📋 INLINE TASK CREATION & EDIT OVERLAYS MODALS (INTERACTIVE FORM) */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {isCreateModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 select-none">
+            {/* Backdrop color filter */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsCreateModalOpen(false)}
+              className="absolute inset-0 bg-black/85 backdrop-blur-xs"
+            />
+
+            {/* Modal Dialog Body */}
+            <motion.div
+              initial={{ scale: 0.94, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.94, y: 15, opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 280 }}
+              className="relative w-full max-w-lg rounded-2xl bg-slate-900 border border-slate-800 p-5 sm:p-6 shadow-2xl overflow-hidden z-10"
+            >
+              {/* Top Row Title */}
+              <div className="flex items-center justify-between pb-4 border-b border-slate-850 mb-4 font-sans">
+                <h3 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
+                  <CheckCircle2 className="h-4.5 w-4.5 text-amber-500 shrink-0" />
+                  {taskToEdit ? 'Editar Tarefa' : 'Criar Nova Tarefa'}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setIsCreateModalOpen(false)}
+                  className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-400 hover:text-white"
+                >
+                  <X className="h-4.5 w-4.5" />
+                </button>
+              </div>
+
+              {/* Form Input Container */}
+              <form onSubmit={handleSaveTask} className="space-y-4">
+                
+                {/* Title */}
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Nome da Tarefa/Meta *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: Praticar React ou Lavar louça..."
+                    value={formTitle}
+                    onChange={(e) => setFormTitle(e.target.value)}
+                    className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                {/* Description */}
+                <div className="space-y-1">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Breve Descrição (Opcional)</label>
+                  <textarea
+                    placeholder="Detalhes adicionais para orientar sua execução."
+                    value={formDescription}
+                    onChange={(e) => setFormDescription(e.target.value)}
+                    className="w-full h-16 rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-amber-500 resize-none"
+                  />
+                </div>
+
+                {/* Select properties grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Category */}
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Categoria</label>
+                    <select
+                      value={formCategory}
+                      onChange={(e) => setFormCategory(e.target.value as TaskCategory)}
+                      className="w-full rounded-xl border border-slate-800 bg-slate-950 px-2.5 py-2 text-xs text-slate-300 font-bold focus:outline-none"
+                    >
+                      <option value="Trabalho">Trabalho</option>
+                      <option value="Estudo">Estudo</option>
+                      <option value="Pessoal">Pessoal</option>
+                      <option value="Saúde">Saúde</option>
+                      <option value="Geral">Geral</option>
+                    </select>
+                  </div>
+
+                  {/* Priority */}
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Prioridade</label>
+                    <select
+                      value={formPriority}
+                      onChange={(e) => setFormPriority(e.target.value as TaskPriority)}
+                      className="w-full rounded-xl border border-slate-800 bg-slate-950 px-2.5 py-2 text-xs text-slate-300 font-bold focus:outline-none"
+                    >
+                      <option value="high">Altíssima (Alto XP)</option>
+                      <option value="medium">Média (Médio XP)</option>
+                      <option value="low">Leve (Baixo XP)</option>
+                    </select>
+                  </div>
+
+                  {/* Weekly Scheduling */}
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Dia de Execução</label>
+                    <select
+                      value={formDayOfWeek}
+                      onChange={(e) => setFormDayOfWeek(e.target.value as any)}
+                      className="w-full rounded-xl border border-slate-800 bg-slate-950 px-2.5 py-2 text-xs text-slate-300 font-bold focus:outline-none"
+                    >
+                      <option value="none">Nenhum (Livre)</option>
+                      <option value="Segunda">Segunda-feira</option>
+                      <option value="Terça">Terça-feira</option>
+                      <option value="Quarta">Quarta-feira</option>
+                      <option value="Quinta">Quinta-feira</option>
+                      <option value="Sexta">Sexta-feira</option>
+                      <option value="Sábado">Sábado</option>
+                      <option value="Domingo">Domingo</option>
+                    </select>
                   </div>
                 </div>
 
-                {/* Footer Initiate Journey button */}
-                <div className="pt-4 border-t border-slate-800 flex items-center justify-between gap-4">
-                  <p className="text-[10px] text-slate-500 leading-relaxed font-mono">
-                    Confirme seus focos para iniciar o seu planejamento produtivo de hoje.
-                  </p>
+                {/* Subtasks inside Creator overlay */}
+                <div className="border-t border-slate-850 pt-3.5 space-y-2">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Checklist de Subtarefas</label>
                   
-                  <button
-                    onClick={() => {
-                      localStorage.setItem('citrino_last_ritual_date', new Date().toLocaleDateString());
-                      setIsOpeningRitualVisible(false);
-                      // Trigger celebration confetti & bell sound on consagration success
-                      if (soundEnabled) {
-                        try {
-                          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-                          if (AudioContextClass) {
-                            const ctx = new AudioContextClass();
-                            const osc = ctx.createOscillator();
-                            const gain = ctx.createGain();
-                            osc.type = 'sine';
-                            osc.frequency.setValueAtTime(880, ctx.currentTime); // A5 note
-                            gain.gain.setValueAtTime(0.08, ctx.currentTime);
-                            gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.8);
-                            osc.connect(gain);
-                            gain.connect(ctx.destination);
-                            osc.start();
-                            osc.stop(ctx.currentTime + 0.9);
-                          }
-                        } catch (err) {
-                          console.warn(err);
+                  {/* Inline list of newly added subtasks */}
+                  {formSubtasks.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pb-2">
+                      {formSubtasks.map((s, index) => (
+                        <div key={s.id} className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-[10px] text-slate-350">
+                          <span>{index + 1}. {s.title}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveFormSubtask(s.id)}
+                            className="text-red-400 hover:text-red-300 p-0 hover:bg-transparent cursor-pointer border-0"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Adder text line */}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Adicione um subitem..."
+                      value={newSubtaskTitle}
+                      onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddFormSubtask();
                         }
-                      }
-                      try {
-                        (window as any).confetti?.({
-                          particleCount: 50,
-                          angle: 60,
-                          spread: 55,
-                          origin: { x: 0 }
-                        });
-                        (window as any).confetti?.({
-                          particleCount: 50,
-                          angle: 120,
-                          spread: 55,
-                          origin: { x: 1 }
-                        });
-                      } catch (c) {}
-                    }}
-                    className="flex items-center gap-1 px-5 py-3 bg-amber-500 hover:bg-amber-400 text-slate-550 hover:text-slate-950 font-black rounded-2xl text-xs transition-transform cursor-pointer shadow-lg active:scale-95 uppercase tracking-wide shrink-0 font-sans"
+                      }}
+                      className="flex-1 rounded-xl border border-slate-800 bg-slate-950 px-3 py-1.5 text-xs text-slate-250 placeholder:text-slate-650 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddFormSubtask}
+                      className="px-3.5 py-1.5 bg-slate-850 hover:bg-slate-800 text-slate-300 hover:text-slate-100 font-extrabold text-[10px] rounded-xl tracking-wider uppercase border-0 transition-colors cursor-pointer"
+                    >
+                      Inserir Subitem
+                    </button>
+                  </div>
+                </div>
+
+                {/* Bottom Actions Row */}
+                <div className="pt-4 border-t border-slate-850 flex justify-end gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsCreateModalOpen(false)}
+                    className="px-4 py-2.5 bg-slate-950 hover:bg-slate-900 text-slate-400 hover:text-white font-bold text-[10px] rounded-xl transition-all cursor-pointer border border-slate-800"
                   >
-                    <span>Iniciar Jornada</span>
-                    <span>🌅</span>
+                    Descartar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4.5 py-2.5 bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 font-black text-[10px] rounded-xl tracking-wider uppercase transition-colors hover:brightness-110 cursor-pointer border-0 shadow"
+                  >
+                    Salvar Mudanças ✨
                   </button>
                 </div>
-              </div>
+
+              </form>
             </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* TELA DE SUCESSO DO RITUAL (100% COMPLETION DIARY CONGRATS COMPONENT) */}
-      <AnimatePresence>
-        {showSuccessCelebration && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-slate-950/95 flex items-center justify-center p-4 sm:p-6"
-          >
-            {/* Elegant deep glow */}
-            <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-96 w-96 rounded-full bg-amber-500/20 blur-[140px] pointer-events-none" />
-
-            <motion.div
-              initial={{ scale: 0.9, y: 15 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 15 }}
-              className="w-full max-w-lg bg-slate-900 border border-amber-500/20 rounded-3xl p-6 sm:p-8 text-center relative z-10 shadow-2xl space-y-6"
-            >
-              <div className="inline-flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/10 border border-amber-500/35 text-amber-500 animate-bounce">
-                <Trophy className="h-8 w-8 text-amber-500" />
-              </div>
-
-              <div className="space-y-2">
-                <span className="font-mono text-[9px] font-black text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full uppercase tracking-wider">
-                  Jornada Concluída
-                </span>
-                <h2 className="font-sans text-xl sm:text-2xl font-black text-white uppercase tracking-tight leading-tight mt-1">
-                  100% de Conclusão <br />
-                  <span className="text-amber-400">Das Suas Prioridades!</span>
-                </h2>
-              </div>
-
-              <p className="text-xs text-slate-400 leading-relaxed max-w-sm mx-auto">
-                Parabéns! Você planejou e executou sua jornada hoje, concluindo as 3 principais tarefas de foco com maestria!
-              </p>
-
-              {/* Bonus badge details */}
-              <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800 text-left font-mono text-[10px] space-y-2">
-                <div className="flex justify-between items-center text-slate-400">
-                  <span>Prioridades Resolvidas:</span>
-                  <span className="text-amber-500 font-bold">{completedPrioritiesCount}/{totalPrioritiesCount}</span>
-                </div>
-                <div className="flex justify-between items-center text-slate-400">
-                  <span>Recompensa Citrino Extra:</span>
-                  <span className="text-amber-500 font-black">+100 XP Extra de Foco</span>
-                </div>
-                <div className="h-1.5 w-full bg-slate-900 rounded-full overflow-hidden border border-slate-850 mt-1">
-                  <div className="h-full bg-gradient-to-r from-amber-600 to-yellow-400 rounded-full w-full" />
-                </div>
-              </div>
-
-              <div className="pt-2">
-                <button
-                  onClick={() => {
-                    // Award bonus 100 XP on daily priority complete confirmation, and close overlay
-                    setShowSuccessCelebration(false);
-                  }}
-                  className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-2xl text-xs transition-transform cursor-pointer shadow-lg active:scale-95 uppercase tracking-wider"
-                >
-                  Continuar Aprendizado 🚀
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>
-  );
-}
-
-export default function App() {
-  return (
-    <TaskProvider>
-      <DashboardContent />
-    </TaskProvider>
   );
 }
