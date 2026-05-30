@@ -1305,8 +1305,7 @@ export default function App() {
         </nav>
 
         {/* Notificações Pendentes (Lembretes ativos hoje) */}
-        {reminderTasks.length > 0 && (
-          <div className="px-4 py-2 border-t border-slate-850">
+        <div className="px-4 py-2 border-t border-slate-850">
             <div className="flex items-center justify-between mb-2 px-1">
               <span className="text-[10px] font-black tracking-widest text-[#41537C] uppercase flex items-center gap-1.5">
                 <Bell className="h-3 w-3 text-amber-500 animate-[swing_2s_infinite]" /> NOTIFICAÇÕES ({reminderTasks.length})
@@ -1434,7 +1433,6 @@ export default function App() {
               </AnimatePresence>
             </div>
           </div>
-        )}
 
         {/* Meta Diária (Daily Goal Progress with Reward Selector) */}
         <div className="px-4 py-3 border-t border-slate-850 bg-slate-900/10">
@@ -1784,8 +1782,7 @@ export default function App() {
                 </nav>
 
                 {/* Mobile Notificações Pendentes */}
-                {reminderTasks.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-slate-800">
+                <div className="mt-4 pt-4 border-t border-slate-800">
                     <div className="flex items-center justify-between mb-2 px-1">
                       <span className="text-[9px] font-black tracking-widest text-[#41537C] uppercase flex items-center gap-1.5">
                         <Bell className="h-3 w-3 text-amber-500 animate-[swing_2s_infinite]" /> NOTIFICAÇÕES ({reminderTasks.length})
@@ -1915,7 +1912,6 @@ export default function App() {
                       </AnimatePresence>
                     </div>
                   </div>
-                )}
               </div>
 
               {/* Mobile bottom panel */}
