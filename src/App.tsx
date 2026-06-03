@@ -304,6 +304,10 @@ export default function App() {
     const saved = localStorage.getItem('citrino_sound_levelup');
     return saved === null ? true : saved === 'true';
   });
+  const [soundTonePreset, setSoundTonePreset] = useState<'classic' | 'high-pitch' | 'low-bass' | 'cosmic'>(() => {
+    const saved = localStorage.getItem('citrino_sound_tone_preset');
+    return (saved as 'classic' | 'high-pitch' | 'low-bass' | 'cosmic') || 'classic';
+  });
 
   // Daily Goal Configuration Tiers
   const GOAL_TIERS = [
@@ -353,6 +357,102 @@ export default function App() {
   const [lastNotifiedLocalTasksDate, setLastNotifiedLocalTasksDate] = useState<string>(() => {
     return localStorage.getItem('citrino_last_notified_local_tasks_date') || '';
   });
+
+  // Water drinking reminder states
+  const [isNotificationDeniedModalOpen, setIsNotificationDeniedModalOpen] = useState<boolean>(false);
+  const [waterReminderEnabled, setWaterReminderEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('citrino_water_reminder_enabled') === 'true';
+  });
+  const [lastWaterReminderNotificationTime, setLastWaterReminderNotificationTime] = useState<number>(() => {
+    const saved = localStorage.getItem('citrino_last_water_notified_time');
+    return saved ? parseInt(saved, 10) : 0;
+  });
+  const [isWaterReminderAlertOpen, setIsWaterReminderAlertOpen] = useState<boolean>(false);
+  const [timeToNextWaterReminder, setTimeToNextWaterReminder] = useState<string>('');
+
+  // Persist settings
+  useEffect(() => {
+    localStorage.setItem('citrino_water_reminder_enabled', String(waterReminderEnabled));
+  }, [waterReminderEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem('citrino_last_water_notified_time', String(lastWaterReminderNotificationTime));
+  }, [lastWaterReminderNotificationTime]);
+
+  // Water remind action checker and countdown timer
+  useEffect(() => {
+    if (!waterReminderEnabled) {
+      setTimeToNextWaterReminder('');
+      return;
+    }
+
+    const checkAndNotifyWater = () => {
+      const now = Date.now();
+      const lastDrank = new Date(lastWaterTimestamp).getTime();
+      const elapsedSinceDrank = now - lastDrank;
+      const threeHoursMs = 3 * 60 * 60 * 1000;
+      
+      const remainingMs = Math.max(0, threeHoursMs - elapsedSinceDrank);
+      
+      if (remainingMs > 0) {
+        // Format remainingMs to HH:MM:SS
+        const totalSecs = Math.floor(remainingMs / 1000);
+        const hrs = Math.floor(totalSecs / 3600);
+        const mins = Math.floor((totalSecs % 3600) / 60);
+        const secs = totalSecs % 60;
+        setTimeToNextWaterReminder(
+          `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+        );
+      } else {
+        setTimeToNextWaterReminder('00:00:00');
+        
+        // Notify if we haven't already notified for this cycle, OR it has been 3/more hours since the last notification
+        const elapsedSinceNotify = now - lastWaterReminderNotificationTime;
+        if (lastWaterReminderNotificationTime < lastDrank || elapsedSinceNotify >= threeHoursMs) {
+          // Trigger system push notification if support exists/granted
+          if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+            try {
+              new Notification('🥤 Hora de Beber Água! 💦', {
+                body: 'Mantenha sua mente afiada e corpo saudável. Beba um copo de água agora!',
+                tag: 'citrino-water-reminder',
+                requireInteraction: true
+              });
+            } catch (e) {
+              console.warn(e);
+            }
+          }
+          
+          // Trigger in-app alert card
+          setIsWaterReminderAlertOpen(true);
+          try {
+            playSound('level'); // Beautiful chime for hydration!
+          } catch (e) {}
+          
+          setLastWaterReminderNotificationTime(now);
+        }
+      }
+    };
+
+    checkAndNotifyWater();
+    const interval = setInterval(checkAndNotifyWater, 1000);
+    return () => clearInterval(interval);
+  }, [waterReminderEnabled, lastWaterTimestamp, lastWaterReminderNotificationTime]);
+
+  const handleToggleWaterReminder = async () => {
+    playSound('click');
+    const nextState = !waterReminderEnabled;
+    
+    if (nextState) {
+      if (typeof window !== 'undefined' && 'Notification' in window) {
+        const granted = await requestNotificationPermission();
+        setNotificationPermissionStatus(Notification.permission);
+        if (!granted) {
+          return; // Do not enable if blocked/not granted
+        }
+      }
+    }
+    setWaterReminderEnabled(nextState);
+  };
 
   // Level Up Celebrations & Particles
   const [levelUpParticles, setLevelUpParticles] = useState<{
@@ -446,6 +546,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('citrino_sound_levelup', String(isLevelUpChimeEnabled));
   }, [isLevelUpChimeEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem('citrino_sound_tone_preset', soundTonePreset);
+  }, [soundTonePreset]);
 
   useEffect(() => {
     localStorage.setItem('citrino_daily_goal_target', dailyGoalTarget.toString());
@@ -704,30 +808,118 @@ export default function App() {
       osc.connect(gain);
       gain.connect(audioCtx.destination);
 
-      if (type === 'check') {
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(320, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(640, audioCtx.currentTime + 0.15);
-        gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.18);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.18);
-      } else if (type === 'level') {
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(440, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1);
-        osc.frequency.exponentialRampToValueAtTime(1320, audioCtx.currentTime + 0.25);
-        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.35);
+      if (soundTonePreset === 'high-pitch') {
+        // High-pitch Crystal / Chime tones
+        if (type === 'check') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(680, audioCtx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(1360, audioCtx.currentTime + 0.15);
+          gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.005, audioCtx.currentTime + 0.15);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.15);
+        } else if (type === 'level') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(1046.50, audioCtx.currentTime); // C6
+          osc.frequency.setValueAtTime(1318.51, audioCtx.currentTime + 0.1); // E6
+          osc.frequency.setValueAtTime(1567.98, audioCtx.currentTime + 0.2); // G6
+          osc.frequency.setValueAtTime(2093.00, audioCtx.currentTime + 0.3); // C7
+          gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.45);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.45);
+        } else {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
+          gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.04);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.04);
+        }
+      } else if (soundTonePreset === 'low-bass') {
+        // Low-bass Deep / Retro Synth tones
+        if (type === 'check') {
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(160, audioCtx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(320, audioCtx.currentTime + 0.22);
+          gain.gain.setValueAtTime(0.16, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.25);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.25);
+        } else if (type === 'level') {
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(196, audioCtx.currentTime); // G3
+          osc.frequency.setValueAtTime(261.63, audioCtx.currentTime + 0.12); // C4
+          osc.frequency.setValueAtTime(329.63, audioCtx.currentTime + 0.24); // E4
+          osc.frequency.setValueAtTime(392, audioCtx.currentTime + 0.36); // G4
+          gain.gain.setValueAtTime(0.18, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.5);
+        } else {
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(220, audioCtx.currentTime);
+          gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.002, audioCtx.currentTime + 0.1);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.1);
+        }
+      } else if (soundTonePreset === 'cosmic') {
+        // Cosmic space wave sound effects
+        if (type === 'check') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(900, audioCtx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(200, audioCtx.currentTime + 0.28);
+          gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.005, audioCtx.currentTime + 0.3);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.3);
+        } else if (type === 'level') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(1600, audioCtx.currentTime + 0.15);
+          osc.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.3);
+          osc.frequency.exponentialRampToValueAtTime(2400, audioCtx.currentTime + 0.45);
+          gain.gain.setValueAtTime(0.14, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.003, audioCtx.currentTime + 0.55);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.55);
+        } else {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.08);
+          gain.gain.setValueAtTime(0.06, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.002, audioCtx.currentTime + 0.08);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.08);
+        }
       } else {
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(500, audioCtx.currentTime);
-        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.06);
+        // Default Classic Citrino synthesizer
+        if (type === 'check') {
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(320, audioCtx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(640, audioCtx.currentTime + 0.15);
+          gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.18);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.18);
+        } else if (type === 'level') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+          osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+          osc.frequency.exponentialRampToValueAtTime(1320, audioCtx.currentTime + 0.25);
+          gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.35);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.35);
+        } else {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(500, audioCtx.currentTime);
+          gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.06);
+        }
       }
     } catch (e) {
       // AudioContext blocker fallback
@@ -861,7 +1053,14 @@ export default function App() {
     if (Notification.permission === 'granted') {
       return true;
     }
+    if (Notification.permission === 'denied') {
+      setIsNotificationDeniedModalOpen(true);
+      return false;
+    }
     const permission = await Notification.requestPermission();
+    if (permission === 'denied') {
+      setIsNotificationDeniedModalOpen(true);
+    }
     return permission === 'granted';
   };
 
@@ -1375,6 +1574,45 @@ export default function App() {
               </button>
             );
           })}
+
+          {/* Custom Beber Água Quick Sync Button */}
+          <div className="pt-2 border-t border-slate-850/60 mt-2">
+            <button
+              type="button"
+              onClick={handleToggleWaterReminder}
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition-all duration-305 group border cursor-pointer ${
+                waterReminderEnabled
+                  ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/25 shadow-md shadow-cyan-500/5'
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-850/60 border border-transparent'
+              }`}
+              title="Lembretes de Hidratação a cada 3 horas"
+            >
+              <div className="flex items-center gap-3">
+                <motion.div
+                  animate={waterReminderEnabled ? {
+                    scale: [1, 1.15, 1],
+                    filter: ["drop-shadow(0 0 0px rgba(6,182,212,0))", "drop-shadow(0 0 5px rgba(6,182,212,0.6))", "drop-shadow(0 0 0px rgba(6,182,212,0))"]
+                  } : {}}
+                  transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                  className="shrink-0"
+                >
+                  <Droplet className={`h-4.5 w-4.5 transition-transform duration-300 group-hover:scale-110 ${waterReminderEnabled ? 'text-cyan-400 fill-cyan-400/20' : 'text-slate-500'}`} />
+                </motion.div>
+                <div className="flex flex-col text-left">
+                  <span>Beber Água</span>
+                  {waterReminderEnabled && timeToNextWaterReminder && (
+                    <span className="text-[9px] font-mono font-medium text-cyan-400/80 mt-0.5">
+                      Alerta {timeToNextWaterReminder}
+                    </span>
+                  )}
+                </div>
+              </div>
+              
+              <div className={`w-7 h-4.5 rounded-full p-0.5 transition-colors duration-200 ${waterReminderEnabled ? 'bg-cyan-500' : 'bg-slate-850'}`}>
+                <div className={`w-3.5 h-3.5 rounded-full bg-slate-950 transition-transform duration-200 ${waterReminderEnabled ? 'translate-x-2.5' : 'translate-x-0'}`} />
+              </div>
+            </button>
+          </div>
         </nav>
 
         {/* Notificações Pendentes (Lembretes ativos hoje) */}
@@ -1949,6 +2187,48 @@ export default function App() {
                       </button>
                     );
                   })}
+
+                  {/* Custom Beber Água Quick Sync Button (Mobile) */}
+                  <div className="pt-2 border-t border-slate-800 mt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleToggleWaterReminder();
+                        setIsMobileMenuOpen(false); // Close mobile sidebar on toggle
+                      }}
+                      className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition-all duration-305 group border cursor-pointer ${
+                        waterReminderEnabled
+                          ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/25 shadow-md shadow-cyan-500/5'
+                          : 'text-slate-400 hover:text-slate-100 hover:bg-slate-850/60 border-transparent'
+                      }`}
+                      title="Lembretes de Hidratação a cada 3 horas"
+                    >
+                      <div className="flex items-center gap-3">
+                        <motion.div
+                          animate={waterReminderEnabled ? {
+                            scale: [1, 1.15, 1],
+                            filter: ["drop-shadow(0 0 0px rgba(6,182,212,0))", "drop-shadow(0 0 5px rgba(6,182,212,0.6))", "drop-shadow(0 0 0px rgba(6,182,212,0))"]
+                          } : {}}
+                          transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                          className="shrink-0"
+                        >
+                          <Droplet className={`h-4.5 w-4.5 transition-transform duration-300 group-hover:scale-110 ${waterReminderEnabled ? 'text-cyan-400 fill-cyan-400/20' : 'text-slate-500'}`} />
+                        </motion.div>
+                        <div className="flex flex-col text-left">
+                          <span>Beber Água</span>
+                          {waterReminderEnabled && timeToNextWaterReminder && (
+                            <span className="text-[9px] font-mono font-medium text-cyan-400/80 mt-0.5">
+                              Alerta {timeToNextWaterReminder}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      
+                      <div className={`w-7 h-4.5 rounded-full p-0.5 transition-colors duration-200 ${waterReminderEnabled ? 'bg-cyan-500' : 'bg-slate-850'}`}>
+                        <div className={`w-3.5 h-3.5 rounded-full bg-slate-950 transition-transform duration-200 ${waterReminderEnabled ? 'translate-x-2.5' : 'translate-x-0'}`} />
+                      </div>
+                    </button>
+                  </div>
                 </nav>
 
                 {/* Mobile Notificações Pendentes */}
@@ -4280,6 +4560,113 @@ export default function App() {
                       </div>
                     </div>
 
+                    {/* Water drinking reminder preference */}
+                    <div className="flex items-center justify-between pt-4 border-t border-slate-850 py-1">
+                      <div className="space-y-0.5 text-left">
+                        <span className="text-xs font-bold text-slate-250 block">Lembretes de Beber Água</span>
+                        <span className="text-[10px] text-slate-500 block">Notifica e incentiva você a beber água a cada 3 horas para se manter saudável.</span>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        {waterReminderEnabled && timeToNextWaterReminder && (
+                          <span className="text-[9px] font-mono text-cyan-400 font-bold bg-cyan-950/40 px-2 py-0.5 rounded-lg border border-cyan-850/40 shrink-0">
+                            Próximo em: {timeToNextWaterReminder}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleToggleWaterReminder}
+                          className={`relative inline-flex h-5.5 w-10 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            waterReminderEnabled ? 'bg-cyan-500' : 'bg-slate-800'
+                          }`}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-4.5 w-4.5 transform rounded-full bg-slate-950 shadow-lg ring-0 transition duration-200 ease-in-out ${
+                              waterReminderEnabled ? 'translate-x-4.5' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Sound Tone/Frequency Selector Preference */}
+                    <div className="pt-4 border-t border-slate-850 space-y-3">
+                      <div className="text-left">
+                        <span className="text-xs font-bold text-slate-250 block">Timbre e Frequência dos Sinais Sonoros</span>
+                        <span className="text-[10px] text-slate-500 block">Personalize o tom de feedback para lembretes de beber água e conclusão de tarefas.</span>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {[
+                          { id: 'classic', label: 'Citrino Clássico', desc: 'Equilibrado & Médio', icon: '🔔' },
+                          { id: 'high-pitch', label: 'Cristal Agudo', desc: 'Sino Brilhante', icon: '✨' },
+                          { id: 'low-bass', label: 'Grave Retrô', desc: 'Quente & Sintético', icon: '🎹' },
+                          { id: 'cosmic', label: 'Sinal Cósmico', desc: 'Espacial & Futuro', icon: '🚀' }
+                        ].map((preset) => {
+                          const isActive = soundTonePreset === preset.id;
+                          return (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              onClick={() => {
+                                setSoundTonePreset(preset.id as any);
+                                // Interactive preview chime triggers instantly to demonstrate the frequency/wave structure chosen
+                                setTimeout(() => {
+                                  try {
+                                    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+                                    const osc = audioCtx.createOscillator();
+                                    const gain = audioCtx.createGain();
+                                    osc.connect(gain);
+                                    gain.connect(audioCtx.destination);
+                                    
+                                    if (preset.id === 'high-pitch') {
+                                      osc.type = 'sine';
+                                      osc.frequency.setValueAtTime(1360, audioCtx.currentTime);
+                                      gain.gain.setValueAtTime(0.06, audioCtx.currentTime);
+                                      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+                                      osc.start();
+                                      osc.stop(audioCtx.currentTime + 0.15);
+                                    } else if (preset.id === 'low-bass') {
+                                      osc.type = 'triangle';
+                                      osc.frequency.setValueAtTime(320, audioCtx.currentTime);
+                                      gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+                                      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                                      osc.start();
+                                      osc.stop(audioCtx.currentTime + 0.2);
+                                    } else if (preset.id === 'cosmic') {
+                                      osc.type = 'sine';
+                                      osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+                                      osc.frequency.exponentialRampToValueAtTime(200, audioCtx.currentTime + 0.25);
+                                      gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                                      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
+                                      osc.start();
+                                      osc.stop(audioCtx.currentTime + 0.25);
+                                    } else {
+                                      // Classic
+                                      osc.type = 'triangle';
+                                      osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+                                      gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                                      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.18);
+                                      osc.start();
+                                      osc.stop(audioCtx.currentTime + 0.18);
+                                    }
+                                  } catch (err) {}
+                                }, 50);
+                              }}
+                              className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition-all duration-200 cursor-pointer ${
+                                isActive
+                                  ? 'bg-[#1e293b]/70 border-amber-500 text-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.08)] scale-[1.01]'
+                                  : 'bg-slate-950/65 border-slate-850 text-slate-400 hover:border-slate-700 hover:text-slate-100'
+                              }`}
+                            >
+                              <span className="text-sm mb-1">{preset.icon}</span>
+                              <span className="text-[10px] font-black tracking-tight">{preset.label}</span>
+                              <span className="text-[8px] text-slate-500 font-medium mt-0.5 leading-none">{preset.desc}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
                     {/* Dynamic BG indicator */}
                     <div className="flex items-center justify-between pt-4 border-t border-slate-850">
                       <div>
@@ -4617,7 +5004,16 @@ export default function App() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setLocalTaskReminderEnabled(!localTaskReminderEnabled)}
+                    onClick={async () => {
+                      playSound('click');
+                      const nextState = !localTaskReminderEnabled;
+                      if (nextState) {
+                        const granted = await requestNotificationPermission();
+                        setNotificationPermissionStatus(Notification.permission);
+                        if (!granted) return;
+                      }
+                      setLocalTaskReminderEnabled(nextState);
+                    }}
                     className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
                       localTaskReminderEnabled ? 'bg-amber-500' : 'bg-slate-800'
                     }`}
@@ -4750,6 +5146,164 @@ export default function App() {
                 </button>
               </div>
 
+            </motion.div>
+          </div>
+        )}
+
+        {isWaterReminderAlertOpen && (
+          <div className="fixed bottom-6 right-6 z-50 max-w-sm w-full p-4 sm:p-0 select-none">
+            <motion.div
+              initial={{ opacity: 0, y: 50, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.95 }}
+              transition={{ type: 'spring', damping: 20, stiffness: 300 }}
+              className="bg-[#0b1329]/95 border-2 border-cyan-500/30 rounded-3xl p-5 shadow-2xl backdrop-blur-md relative overflow-hidden"
+            >
+              {/* Highlight background lines */}
+              <div className="absolute top-0 right-0 h-32 w-32 bg-cyan-500/5 rounded-full filter blur-xl pointer-events-none" />
+              
+              <div className="flex gap-4 items-start relative z-10">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-2xl shrink-0 animate-bounce">
+                  🥤
+                </div>
+                <div className="flex-1 text-left">
+                  <h4 className="text-sm font-black text-white font-sans tracking-tight mb-1 flex items-center gap-1.5">
+                    Hora de Beber Água! <span className="animate-pulse">💦</span>
+                  </h4>
+                  <p className="text-xs text-slate-350 leading-relaxed font-sans mb-3.5">
+                    Já se passaram 3 horas desde seu último copo de água. Manter-se hidratado ajuda a manter o foco, energia e clareza mental!
+                  </p>
+                  
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleDrinkWater();
+                        setIsWaterReminderAlertOpen(false);
+                      }}
+                      className="flex-1 py-1.5 px-3 bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all h-9 cursor-pointer shadow-lg shadow-cyan-500/20 text-center flex items-center justify-center"
+                    >
+                      🥤 Beber Copo (+1)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsWaterReminderAlertOpen(false)}
+                      className="py-1.5 px-3 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all h-9 cursor-pointer border border-slate-800 text-center"
+                    >
+                      Ignorar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Browser Notification Blocked Friendly Guidelines Modal */}
+        {isNotificationDeniedModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop Blur screen */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsNotificationDeniedModalOpen(false)}
+              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm cursor-pointer"
+            />
+            
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ type: 'spring', duration: 0.35 }}
+              className="relative bg-gradient-to-b from-[#0f172a] to-[#020617] border-2 border-amber-500/20 rounded-3xl max-w-md w-full p-6 text-slate-300 shadow-2xl relative overflow-hidden"
+            >
+              {/* Radial Highlight Effect */}
+              <div className="absolute top-0 left-1/2 -translate-x-1/2 h-44 w-44 bg-amber-500/5 rounded-full filter blur-2xl pointer-events-none" />
+              
+              {/* Header Close button */}
+              <button
+                type="button"
+                onClick={() => setIsNotificationDeniedModalOpen(false)}
+                className="absolute top-4 right-4 h-8 w-8 flex items-center justify-center rounded-xl bg-slate-950 border border-slate-850 text-slate-400 hover:text-white transition-colors duration-205 cursor-pointer"
+                title="Fechar"
+              >
+                <X className="h-4 w-4" />
+              </button>
+
+              <div className="flex flex-col items-center text-center space-y-4 relative z-10 mt-2">
+                <div className="h-14 w-14 rounded-2xl bg-amber-500/10 text-amber-500 border border-amber-500/20 flex items-center justify-center text-3xl shadow-lg ring-4 ring-amber-500/5 animate-pulse">
+                  🔔
+                </div>
+                
+                <div className="space-y-1">
+                  <h3 className="text-base font-black text-white font-sans tracking-tight uppercase">
+                    Notificações Bloqueadas
+                  </h3>
+                  <p className="text-[11px] text-slate-400 leading-relaxed font-medium">
+                    As permissões foram desativadas no seu navegador. Ative-as para receber lembretes de beber água e alertas offline de tarefas pendentes!
+                  </p>
+                </div>
+                
+                {/* Guided step illustrations list */}
+                <div className="w-full bg-slate-950/50 rounded-2xl border border-slate-850/50 p-4 space-y-3.5 text-left">
+                  <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest pb-1.5 border-b border-slate-850/40">
+                    Passo a passo para Habiltar:
+                  </p>
+                  
+                  <div className="flex gap-3 items-start">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500 text-[10px] font-black font-sans border border-amber-500/20">1</span>
+                    <p className="text-[11px] text-slate-300 leading-snug">
+                      <strong className="text-white">Na barra de endereço:</strong> Clique no ícone de ajustes <span className="bg-slate-900 px-1 py-0.5 rounded text-slate-400 text-[9px] border border-slate-800">🔒 Cadeado</span> ou de controles à esquerda da URL do site.
+                    </p>
+                  </div>
+
+                  <div className="flex gap-3 items-start">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500 text-[10px] font-black font-sans border border-amber-500/20">2</span>
+                    <p className="text-[11px] text-slate-300 leading-snug">
+                      <strong className="text-white">Permita Notificações:</strong> Encontre a opção <strong className="text-amber-400">Notificações</strong> (Notifications) na lista e altere o status para <strong className="text-emerald-400">"Permitir"</strong> (Allow).
+                    </p>
+                  </div>
+
+                  <div className="flex gap-3 items-start">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500 text-[10px] font-black font-sans border border-amber-500/20">3</span>
+                    <p className="text-[11px] text-slate-300 leading-snug">
+                      <strong className="text-white">Recarregue a página:</strong> Salve as alterações e recarregue o Citrino para ativar suas preferências de hidratação.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-[9px] text-slate-500 text-left bg-slate-950/25 p-3 rounded-xl border border-slate-850/40 leading-relaxed font-medium">
+                  💡 <strong className="text-slate-400">Dica:</strong> Se usando macOS/Windows, confirme se o navegador Google Chrome, Safari ou Firefox está autorizado nas preferências de notificações globais do próprio sistema operacional.
+                </div>
+
+                {/* Footer Action items */}
+                <div className="flex gap-2 w-full pt-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      playSound('click');
+                      if (typeof window !== 'undefined' && 'Notification' in window) {
+                        const permission = await Notification.requestPermission();
+                        setNotificationPermissionStatus(permission);
+                        if (permission === 'granted') {
+                          setIsNotificationDeniedModalOpen(false);
+                        }
+                      }
+                    }}
+                    className="flex-1 py-2 bg-gradient-to-r from-amber-500 to-amber-400 hover:brightness-110 text-slate-950 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer shadow-lg shadow-amber-500/10 border-0 h-9 flex items-center justify-center"
+                  >
+                    🔄 Testar Permissão
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsNotificationDeniedModalOpen(false)}
+                    className="py-2 px-4 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-colors cursor-pointer border border-slate-800 h-9 flex items-center justify-center"
+                  >
+                    Entendi
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </div>
         )}
