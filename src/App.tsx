@@ -342,6 +342,18 @@ export default function App() {
   const [isReminderConfigOpen, setIsReminderConfigOpen] = useState(false);
   const [isMobileReminderConfigOpen, setIsMobileReminderConfigOpen] = useState(false);
 
+  // Local task reminder states (Offline-ready, checks every 15 seconds)
+  const [isLocalTaskReminderModalOpen, setIsLocalTaskReminderModalOpen] = useState(false);
+  const [localTaskReminderTime, setLocalTaskReminderTime] = useState<string>(() => {
+    return localStorage.getItem('citrino_local_task_reminder_time') || '10:00';
+  });
+  const [localTaskReminderEnabled, setLocalTaskReminderEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('citrino_local_task_reminder_enabled') === 'true';
+  });
+  const [lastNotifiedLocalTasksDate, setLastNotifiedLocalTasksDate] = useState<string>(() => {
+    return localStorage.getItem('citrino_last_notified_local_tasks_date') || '';
+  });
+
   // Level Up Celebrations & Particles
   const [levelUpParticles, setLevelUpParticles] = useState<{
     id: number;
@@ -489,6 +501,61 @@ export default function App() {
     const interval = setInterval(checkAndNotify, 20 * 1000); // Check every 20 seconds
     return () => clearInterval(interval);
   }, [dailyGoalReminderEnabled, dailyGoalReminderTime, lastNotifiedDate, tasks]);
+
+  // Save local task reminder settings
+  useEffect(() => {
+    localStorage.setItem('citrino_local_task_reminder_time', localTaskReminderTime);
+  }, [localTaskReminderTime]);
+
+  useEffect(() => {
+    localStorage.setItem('citrino_local_task_reminder_enabled', String(localTaskReminderEnabled));
+  }, [localTaskReminderEnabled]);
+
+  // Local offline-ready task reminder checker
+  useEffect(() => {
+    if (!localTaskReminderEnabled) return;
+
+    const checkAndNotifyLocalTasks = () => {
+      if (typeof window === 'undefined' || !('Notification' in window) || Notification.permission !== 'granted') {
+        return;
+      }
+
+      const now = new Date();
+      // Format "HH:MM" 24h
+      const currentHourMin = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const todayDateStr = `${year}-${month}-${day}`;
+
+      if (currentHourMin === localTaskReminderTime && lastNotifiedLocalTasksDate !== todayDateStr) {
+        // Find tasks scheduled specifically for today that are not completed
+        const todaysTasks = tasks.filter(t => !t.completed && t.dueDate === todayDateStr);
+        
+        if (todaysTasks.length > 0) {
+          const taskTitles = todaysTasks.map(t => `• ${t.title}`).join('\n');
+          new Notification('📅 Tarefas Pendentes de Hoje! 🎯', {
+            body: `Você tem ${todaysTasks.length} tarefa(s) agendada(s) para hoje:\n${taskTitles}`,
+            tag: 'citrino-local-tasks-reminder',
+            requireInteraction: true
+          });
+        } else {
+          new Notification('Sem Tarefas Pendentes! ✨', {
+            body: 'Excelente! Você não possui tarefas pendentes agendadas para hoje. Excelente dia!',
+            tag: 'citrino-local-tasks-reminder'
+          });
+        }
+
+        localStorage.setItem('citrino_last_notified_local_tasks_date', todayDateStr);
+        setLastNotifiedLocalTasksDate(todayDateStr);
+      }
+    };
+
+    checkAndNotifyLocalTasks();
+    const interval = setInterval(checkAndNotifyLocalTasks, 15 * 1000); // Check every 15 seconds
+    return () => clearInterval(interval);
+  }, [localTaskReminderEnabled, localTaskReminderTime, lastNotifiedLocalTasksDate, tasks]);
 
   useEffect(() => {
     localStorage.setItem('citrino_desktop_sidebar_open', String(isDesktopSidebarOpen));
@@ -999,6 +1066,11 @@ export default function App() {
     return status?.isToday || status?.isTomorrow;
   }).length;
   const todayStr = new Date().toISOString().split('T')[0];
+  const tomorrowStr = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  })();
   const overdueOrTodayTasksCount = tasks.filter(t => !t.completed && t.dueDate && t.dueDate <= todayStr).length;
   const reminderTasks = tasks.filter(t => !t.completed && t.reminder);
   const filteredReminderTasks = reminderTasks.filter(t => {
@@ -1017,6 +1089,7 @@ export default function App() {
   });
 
   const tasksCompletedTodayCount = tasks.filter(t => t.completed && t.completedAt === todayStr).length;
+  const hasUrgentTasksToday = tasks.some(t => !t.completed && t.priority === 'high' && t.dueDate === todayStr);
 
   // Dashboard view calculations
   const totalTasks = tasks.length;
@@ -1305,11 +1378,53 @@ export default function App() {
         </nav>
 
         {/* Notificações Pendentes (Lembretes ativos hoje) */}
-        <div className="px-4 py-2 border-t border-slate-850">
-            <div className="flex items-center justify-between mb-2 px-1">
+        <div className="border-t border-slate-850 py-1.5 px-2">
+          <motion.div
+            whileHover={{ 
+              scale: 1.025,
+              y: -1,
+              boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 0 25px rgba(245, 158, 11, 0.12), 0 0 10px rgba(245, 158, 11, 0.05)"
+            }}
+            transition={{ type: "spring", stiffness: 450, damping: 25 }}
+            className="px-2.5 py-2 rounded-xl transition-all duration-300 hover:bg-amber-500/[0.03] border border-transparent hover:border-amber-500/20 bg-slate-900/10 relative overflow-hidden group cursor-default"
+          >
+            {/* Gentle Ambient glow effect background */}
+            <div className="absolute inset-0 bg-gradient-to-r from-amber-500/0 via-amber-500/[0.015] to-amber-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+            
+            <div className="flex items-center justify-between mb-2 px-1 relative z-10">
               <span className="text-[10px] font-black tracking-widest text-[#41537C] uppercase flex items-center gap-1.5">
-                <Bell className="h-3 w-3 text-amber-500 animate-[swing_2s_infinite]" /> NOTIFICAÇÕES ({reminderTasks.length})
+                <motion.span
+                  animate={hasUrgentTasksToday ? {
+                    scale: [1, 1.25, 1],
+                    opacity: [1, 0.7, 1],
+                    filter: [
+                      "drop-shadow(0 0 0px rgba(245, 158, 11, 0))",
+                      "drop-shadow(0 0 5px rgba(245, 158, 11, 0.85))",
+                      "drop-shadow(0 0 0px rgba(245, 158, 11, 0))"
+                    ]
+                  } : {}}
+                  transition={{
+                    duration: 1.5,
+                    repeat: Infinity,
+                    ease: "easeInOut"
+                  }}
+                  className="inline-flex items-center justify-center shrink-0"
+                >
+                  <Bell className={`h-3 w-3 text-amber-500 ${hasUrgentTasksToday ? '' : 'animate-[swing_2s_infinite]'}`} />
+                </motion.span>
+                <span>NOTIFICAÇÕES ({reminderTasks.length})</span>
               </span>
+              <button
+                type="button"
+                onClick={() => setIsLocalTaskReminderModalOpen(true)}
+                title="Configuração Rápida de Lembretes Offline"
+                className="p-1 rounded-md text-slate-500 hover:text-amber-500 hover:bg-slate-800/40 transition-all flex items-center gap-1 text-[10px] font-bold cursor-pointer"
+              >
+                <Settings className="h-3.5 w-3.5 shrink-0" />
+                {localTaskReminderEnabled && (
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                )}
+              </button>
             </div>
 
             {/* Compact Search Bar for Reminders */}
@@ -1334,39 +1449,74 @@ export default function App() {
             </div>
 
             {/* Date Picker for Reminders */}
-            <div className="relative mb-2.5 px-0.5 flex gap-1.5 items-center">
-              <div className="relative flex-1">
-                <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-555 pointer-events-none" />
-                <input
-                  type="date"
-                  value={reminderDateFilter}
-                  onChange={(e) => setReminderDateFilter(e.target.value)}
-                  className="w-full pl-7 pr-7 py-1 text-[10px] font-medium rounded-lg border border-slate-800 bg-slate-950/70 text-slate-300 focus:outline-none focus:border-amber-500/50 [color-scheme:dark]"
-                />
-                {reminderDateFilter && (
-                  <button
-                    onClick={() => setReminderDateFilter('')}
-                    title="Limpar data"
-                    className="absolute right-2 px-1 top-1/2 -translate-y-1/2 text-[9px] text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
-                  >
-                    ✕
-                  </button>
-                )}
+            <div className="space-y-1.5 mb-2.5 px-0.5">
+              <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest block">
+                Filtrar por data específica
+              </span>
+              <div className="relative flex gap-1.5 items-center">
+                <div className={`relative flex-1 rounded-lg border transition-all duration-300 ${
+                  reminderDateFilter 
+                    ? 'border-amber-500/40 bg-amber-500/[0.02] shadow-[0_0_12px_rgba(245,158,11,0.04)]' 
+                    : 'border-slate-800 bg-slate-950/70'
+                }`}>
+                  <Calendar className={`absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 pointer-events-none transition-colors ${
+                    reminderDateFilter ? 'text-amber-500' : 'text-slate-500'
+                  }`} />
+                  <input
+                    type="date"
+                    value={reminderDateFilter}
+                    onChange={(e) => setReminderDateFilter(e.target.value)}
+                    className="w-full pl-7 pr-7 py-1 text-[10px] bg-transparent font-semibold text-slate-200 focus:outline-none focus:ring-0 [color-scheme:dark] cursor-pointer"
+                  />
+                  {reminderDateFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setReminderDateFilter('')}
+                      title="Limpar data (Ver todos)"
+                      className="absolute right-2 px-1 top-1/2 -translate-y-1/2 text-[9px] text-slate-400 hover:text-white transition-colors cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
               </div>
-              {!reminderDateFilter ? (
+
+              {/* Quick Date Presets */}
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => setReminderDateFilter('')}
+                  className={`flex-1 py-0.5 px-1 rounded text-[9px] font-extrabold tracking-wider uppercase transition-all cursor-pointer border ${
+                    !reminderDateFilter
+                      ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                      : 'bg-slate-950/30 text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-850/40'
+                  }`}
+                >
+                  Todas
+                </button>
                 <button
                   type="button"
                   onClick={() => setReminderDateFilter(todayStr)}
-                  title="Filtrar por Hoje"
-                  className="px-2 py-1 text-[9px] font-bold text-slate-400 hover:text-amber-500 border border-slate-800 bg-slate-950/40 hover:bg-slate-950/80 rounded-lg shrink-0 transition-colors cursor-pointer"
+                  className={`flex-1 py-0.5 px-1 rounded text-[9px] font-extrabold tracking-wider uppercase transition-all cursor-pointer border ${
+                    reminderDateFilter === todayStr
+                      ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                      : 'bg-slate-950/30 text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-850/40'
+                  }`}
                 >
                   Hoje
                 </button>
-              ) : (
-                <span className="text-[8px] font-black uppercase text-amber-500 tracking-wider shrink-0 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded-md">
-                  Filtrado
-                </span>
-              )}
+                <button
+                  type="button"
+                  onClick={() => setReminderDateFilter(tomorrowStr)}
+                  className={`flex-1 py-0.5 px-1 rounded text-[9px] font-extrabold tracking-wider uppercase transition-all cursor-pointer border ${
+                    reminderDateFilter === tomorrowStr
+                      ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                      : 'bg-slate-950/30 text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-850/40'
+                  }`}
+                >
+                  Amanhã
+                </button>
+              </div>
             </div>
 
             <div className="max-h-[140px] overflow-y-auto space-y-1.5 pr-0.5 custom-scrollbar">
@@ -1432,7 +1582,27 @@ export default function App() {
                 )}
               </AnimatePresence>
             </div>
-          </div>
+
+            {/* Quick Setup Status for Local Offline Alert */}
+            <div className="mt-2.5 pt-2 border-t border-slate-850/60 flex items-center justify-between px-0.5 text-[9px] relative z-10">
+              <div className="flex items-center gap-1.5 text-slate-400">
+                <div className={`h-1.5 w-1.5 rounded-full ${localTaskReminderEnabled ? 'bg-emerald-500 animate-pulse animate-duration-1000' : 'bg-slate-600'}`} />
+                <span className="font-semibold tracking-wide">
+                  {localTaskReminderEnabled 
+                    ? `Alerta: ${localTaskReminderTime} (s/ rede)` 
+                    : "Alertas locais desligados"}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsLocalTaskReminderModalOpen(true)}
+                className="text-amber-500 hover:text-amber-400 font-black flex items-center gap-0.5 cursor-pointer hover:underline uppercase tracking-wider text-[8px]"
+              >
+                {localTaskReminderEnabled ? "Ajustar" : "Configurar"}
+              </button>
+            </div>
+          </motion.div>
+        </div>
 
         {/* Meta Diária (Daily Goal Progress with Reward Selector) */}
         <div className="px-4 py-3 border-t border-slate-850 bg-slate-900/10">
@@ -1782,11 +1952,53 @@ export default function App() {
                 </nav>
 
                 {/* Mobile Notificações Pendentes */}
-                <div className="mt-4 pt-4 border-t border-slate-800">
-                    <div className="flex items-center justify-between mb-2 px-1">
+                <div className="border-t border-slate-800 mt-3 pt-2">
+                  <motion.div
+                    whileHover={{ 
+                      scale: 1.025,
+                      y: -1,
+                      boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 0 25px rgba(245, 158, 11, 0.12), 0 0 10px rgba(245, 158, 11, 0.05)"
+                    }}
+                    transition={{ type: "spring", stiffness: 450, damping: 25 }}
+                    className="px-2.5 py-2.5 rounded-xl transition-all duration-300 hover:bg-amber-500/[0.03] border border-transparent hover:border-amber-500/20 bg-slate-900/10 relative overflow-hidden group cursor-default"
+                  >
+                    {/* Gentle Ambient glow effect background */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-amber-500/0 via-amber-500/[0.015] to-amber-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+                    
+                    <div className="flex items-center justify-between mb-2 px-1 relative z-10">
                       <span className="text-[9px] font-black tracking-widest text-[#41537C] uppercase flex items-center gap-1.5">
-                        <Bell className="h-3 w-3 text-amber-500 animate-[swing_2s_infinite]" /> NOTIFICAÇÕES ({reminderTasks.length})
+                        <motion.span
+                          animate={hasUrgentTasksToday ? {
+                            scale: [1, 1.25, 1],
+                            opacity: [1, 0.7, 1],
+                            filter: [
+                              "drop-shadow(0 0 0px rgba(245, 158, 11, 0))",
+                              "drop-shadow(0 0 5px rgba(245, 158, 11, 0.85))",
+                              "drop-shadow(0 0 0px rgba(245, 158, 11, 0))"
+                            ]
+                          } : {}}
+                          transition={{
+                            duration: 1.5,
+                            repeat: Infinity,
+                            ease: "easeInOut"
+                          }}
+                          className="inline-flex items-center justify-center shrink-0"
+                        >
+                          <Bell className={`h-3 w-3 text-amber-500 ${hasUrgentTasksToday ? '' : 'animate-[swing_2s_infinite]'}`} />
+                        </motion.span>
+                        <span>NOTIFICAÇÕES ({reminderTasks.length})</span>
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsLocalTaskReminderModalOpen(true)}
+                        title="Configuração Rápida de Lembretes Offline"
+                        className="p-1 rounded-md text-slate-500 hover:text-amber-500 hover:bg-slate-800/40 transition-all flex items-center gap-1 text-[10px] font-bold cursor-pointer"
+                      >
+                        <Settings className="h-3.5 w-3.5 shrink-0" />
+                        {localTaskReminderEnabled && (
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        )}
+                      </button>
                     </div>
 
                     {/* Compact Search Bar for Mobile Reminders */}
@@ -1811,39 +2023,74 @@ export default function App() {
                     </div>
 
                     {/* Date Picker for Mobile Reminders */}
-                    <div className="relative mb-2.5 px-0.5 flex gap-1.5 items-center">
-                      <div className="relative flex-1">
-                        <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-555 pointer-events-none" />
-                        <input
-                          type="date"
-                          value={reminderDateFilter}
-                          onChange={(e) => setReminderDateFilter(e.target.value)}
-                          className="w-full pl-7 pr-7 py-1 text-[10px] font-medium rounded-lg border border-slate-800 bg-slate-950/70 text-slate-300 focus:outline-none focus:border-amber-500/50 [color-scheme:dark]"
-                        />
-                        {reminderDateFilter && (
-                          <button
-                            onClick={() => setReminderDateFilter('')}
-                            title="Limpar data"
-                            className="absolute right-2 px-1 top-1/2 -translate-y-1/2 text-[9px] text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
-                          >
-                            ✕
-                          </button>
-                        )}
+                    <div className="space-y-1.5 mb-2.5 px-0.5">
+                      <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest block">
+                        Filtrar por data específica
+                      </span>
+                      <div className="relative flex gap-1.5 items-center">
+                        <div className={`relative flex-1 rounded-lg border transition-all duration-300 ${
+                          reminderDateFilter 
+                            ? 'border-amber-500/40 bg-amber-500/[0.02] shadow-[0_0_12px_rgba(245,158,11,0.04)]' 
+                            : 'border-slate-800 bg-slate-950/70'
+                        }`}>
+                          <Calendar className={`absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 pointer-events-none transition-colors ${
+                            reminderDateFilter ? 'text-amber-500' : 'text-slate-500'
+                          }`} />
+                          <input
+                            type="date"
+                            value={reminderDateFilter}
+                            onChange={(e) => setReminderDateFilter(e.target.value)}
+                            className="w-full pl-7 pr-7 py-1 text-[10px] bg-transparent font-semibold text-slate-200 focus:outline-none focus:ring-0 [color-scheme:dark] cursor-pointer"
+                          />
+                          {reminderDateFilter && (
+                            <button
+                              type="button"
+                              onClick={() => setReminderDateFilter('')}
+                              title="Limpar data (Ver todos)"
+                              className="absolute right-2 px-1 top-1/2 -translate-y-1/2 text-[9px] text-slate-400 hover:text-white transition-colors cursor-pointer"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      {!reminderDateFilter ? (
+
+                      {/* Quick Date Presets */}
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setReminderDateFilter('')}
+                          className={`flex-1 py-0.5 px-1 rounded text-[9px] font-extrabold tracking-wider uppercase transition-all cursor-pointer border ${
+                            !reminderDateFilter
+                              ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                              : 'bg-slate-950/30 text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-850/40'
+                          }`}
+                        >
+                          Todas
+                        </button>
                         <button
                           type="button"
                           onClick={() => setReminderDateFilter(todayStr)}
-                          title="Filtrar por Hoje"
-                          className="px-2 py-1 text-[9px] font-bold text-slate-400 hover:text-amber-500 border border-slate-800 bg-slate-950/40 hover:bg-slate-950/80 rounded-lg shrink-0 transition-colors cursor-pointer"
+                          className={`flex-1 py-0.5 px-1 rounded text-[9px] font-extrabold tracking-wider uppercase transition-all cursor-pointer border ${
+                            reminderDateFilter === todayStr
+                              ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                              : 'bg-slate-950/30 text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-850/40'
+                          }`}
                         >
                           Hoje
                         </button>
-                      ) : (
-                        <span className="text-[8px] font-black uppercase text-amber-500 tracking-wider shrink-0 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded-md">
-                          Filtrado
-                        </span>
-                      )}
+                        <button
+                          type="button"
+                          onClick={() => setReminderDateFilter(tomorrowStr)}
+                          className={`flex-1 py-0.5 px-1 rounded text-[9px] font-extrabold tracking-wider uppercase transition-all cursor-pointer border ${
+                            reminderDateFilter === tomorrowStr
+                              ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+                              : 'bg-slate-950/30 text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-850/40'
+                          }`}
+                        >
+                          Amanhã
+                        </button>
+                      </div>
                     </div>
 
                     <div className="max-h-[120px] overflow-y-auto space-y-1.5 pr-0.5 custom-scrollbar">
@@ -1911,7 +2158,27 @@ export default function App() {
                         )}
                       </AnimatePresence>
                     </div>
-                  </div>
+
+                    {/* Quick Setup Status for Local Offline Alert */}
+                    <div className="mt-2.5 pt-2 border-t border-slate-800 flex items-center justify-between px-0.5 text-[9px] relative z-10">
+                      <div className="flex items-center gap-1.5 text-slate-400">
+                        <div className={`h-1.5 w-1.5 rounded-full ${localTaskReminderEnabled ? 'bg-emerald-500 animate-pulse animate-duration-1000' : 'bg-slate-600'}`} />
+                        <span className="font-semibold tracking-wide">
+                          {localTaskReminderEnabled 
+                            ? `Alerta: ${localTaskReminderTime} (s/ rede)` 
+                            : "Alertas locais desligados"}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsLocalTaskReminderModalOpen(true)}
+                        className="text-amber-500 hover:text-amber-400 font-black flex items-center gap-0.5 cursor-pointer hover:underline uppercase tracking-wider text-[8px]"
+                      >
+                        {localTaskReminderEnabled ? "Ajustar" : "Configurar"}
+                      </button>
+                    </div>
+                  </motion.div>
+                </div>
               </div>
 
               {/* Mobile bottom panel */}
@@ -2543,9 +2810,37 @@ export default function App() {
                                   {task.completed && <Check className="h-3 w-3 stroke-[3px]" />}
                                 </button>
                                 <div className="min-w-0 flex-1 text-left">
-                                  <h4 className={`text-xs font-black leading-tight break-words font-sans ${task.completed ? 'text-slate-500 line-through font-bold' : 'text-slate-100'}`}>
-                                    {task.title}
-                                  </h4>
+                                  <div className="flex items-start gap-1.5">
+                                    {!task.completed && (
+                                      <motion.span
+                                        animate={task.priority === 'high' ? { scale: [1, 1.15, 1], opacity: [0.8, 1, 0.8] } : {}}
+                                        transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+                                        className={`inline-flex items-center justify-center shrink-0 rounded-full p-0.5 mt-0.5 border ${
+                                          task.priority === 'high'
+                                            ? 'text-red-500 bg-red-500/10 border-red-500/20'
+                                            : task.priority === 'medium'
+                                              ? 'text-amber-500 bg-amber-500/10 border-amber-500/20'
+                                              : 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20'
+                                        }`}
+                                        title={task.priority === 'high' ? 'Alta Prioridade' : task.priority === 'medium' ? 'Prioridade Média' : 'Prioridade Leve'}
+                                      >
+                                        {task.priority === 'high' && <AlertTriangle className="h-3 w-3 fill-red-500/20" />}
+                                        {task.priority === 'medium' && <Zap className="h-3 w-3 fill-amber-500/15" />}
+                                        {task.priority === 'low' && <CheckCircle2 className="h-3 w-3" />}
+                                      </motion.span>
+                                    )}
+                                    <h4 className={`text-xs font-black leading-tight break-words font-sans flex-1 ${
+                                      task.completed 
+                                        ? 'text-slate-500 line-through font-bold' 
+                                        : task.priority === 'high'
+                                          ? 'text-red-400 font-black'
+                                          : task.priority === 'medium'
+                                            ? 'text-amber-400 font-extrabold'
+                                            : 'text-emerald-400 font-bold'
+                                    }`}>
+                                      {task.title}
+                                    </h4>
+                                  </div>
                                   {task.description && (
                                     <p className="text-[10px] text-slate-400 mt-1 line-clamp-2 leading-relaxed text-left font-sans">
                                       {task.description}
@@ -2790,14 +3085,40 @@ export default function App() {
                               </div>
 
                               {/* Title / Description */}
-                              <h3 
-                                onClick={() => handleToggleTask(task.id)}
-                                className={`text-sm sm:text-base font-bold select-none cursor-pointer tracking-tight leading-snug break-words ${
-                                  task.completed ? 'line-through text-slate-500' : 'text-slate-100 group-hover:text-amber-400 transition-colors'
-                                }`}
-                              >
-                                {task.title}
-                              </h3>
+                              <div className="flex items-start gap-2">
+                                {!task.completed && (
+                                  <motion.span
+                                    animate={task.priority === 'high' ? { scale: [1, 1.15, 1], opacity: [0.8, 1, 0.8] } : {}}
+                                    transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+                                    className={`inline-flex items-center justify-center shrink-0 rounded-full p-1 mt-0.5 border ${
+                                      task.priority === 'high'
+                                        ? 'text-red-500 bg-red-500/10 border-red-500/20 shadow-[0_0_8px_rgba(239,68,68,0.1)]'
+                                        : task.priority === 'medium'
+                                          ? 'text-amber-500 bg-amber-500/10 border-amber-500/20'
+                                          : 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20'
+                                    }`}
+                                    title={task.priority === 'high' ? 'Alta Prioridade' : task.priority === 'medium' ? 'Prioridade Média' : 'Prioridade Leve'}
+                                  >
+                                    {task.priority === 'high' && <AlertTriangle className="h-4 w-4 fill-red-500/20" />}
+                                    {task.priority === 'medium' && <Zap className="h-4 w-4 fill-amber-500/15" />}
+                                    {task.priority === 'low' && <CheckCircle2 className="h-4 w-4" />}
+                                  </motion.span>
+                                )}
+                                <h3 
+                                  onClick={() => handleToggleTask(task.id)}
+                                  className={`text-sm sm:text-base font-bold select-none cursor-pointer tracking-tight leading-snug break-words flex-1 transition-colors ${
+                                    task.completed 
+                                      ? 'line-through text-slate-500' 
+                                      : task.priority === 'high'
+                                        ? 'text-red-400 font-black group-hover:text-red-300'
+                                        : task.priority === 'medium'
+                                          ? 'text-amber-400 font-extrabold group-hover:text-amber-300'
+                                          : 'text-emerald-400 font-bold group-hover:text-emerald-350'
+                                  }`}
+                                >
+                                  {task.title}
+                                </h3>
+                              </div>
 
                               {task.description && (
                                 <p className={`text-xs mt-1 leading-relaxed max-w-3xl ${task.completed ? 'text-slate-650' : 'text-slate-400'}`}>
@@ -4080,16 +4401,50 @@ export default function App() {
 
                   {/* Priority */}
                   <div className="space-y-1">
-                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Prioridade</label>
-                    <select
-                      value={formPriority}
-                      onChange={(e) => setFormPriority(e.target.value as TaskPriority)}
-                      className="w-full rounded-xl border border-slate-800 bg-slate-950 px-2.5 py-2 text-xs text-slate-300 font-bold focus:outline-none"
-                    >
-                      <option value="high">Altíssima (Alto XP)</option>
-                      <option value="medium">Média (Médio XP)</option>
-                      <option value="low">Leve (Baixo XP)</option>
-                    </select>
+                    <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Prioridade</label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setFormPriority('high')}
+                        className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-xl border text-[10px] font-black transition-all duration-200 cursor-pointer ${
+                          formPriority === 'high'
+                            ? 'bg-red-500/10 border-red-500 text-red-400 shadow-[0_0_15px_rgba(239,68,68,0.12)] scale-[1.01]'
+                            : 'bg-slate-950/60 border-slate-800 text-slate-450 hover:border-slate-700 hover:text-slate-200'
+                        }`}
+                        title="Alta Prioridade (Mais XP)"
+                      >
+                        <AlertTriangle className="h-3 w-3 shrink-0" />
+                        <span>Alta</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setFormPriority('medium')}
+                        className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-xl border text-[10px] font-black transition-all duration-200 cursor-pointer ${
+                          formPriority === 'medium'
+                            ? 'bg-amber-500/10 border-amber-500 text-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.12)] scale-[1.01]'
+                            : 'bg-slate-950/60 border-slate-800 text-slate-450 hover:border-slate-700 hover:text-slate-200'
+                        }`}
+                        title="Prioridade Média (Médio XP)"
+                      >
+                        <Zap className="h-3 w-3 shrink-0" />
+                        <span>Média</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setFormPriority('low')}
+                        className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-xl border text-[10px] font-black transition-all duration-200 cursor-pointer ${
+                          formPriority === 'low'
+                            ? 'bg-emerald-500/10 border-emerald-500 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.12)] scale-[1.01]'
+                            : 'bg-slate-950/60 border-slate-800 text-slate-450 hover:border-slate-700 hover:text-slate-200'
+                        }`}
+                        title="Prioridade Leve (Menos XP)"
+                      >
+                        <CheckCircle2 className="h-3 w-3 shrink-0" />
+                        <span>Leve</span>
+                      </button>
+                    </div>
                   </div>
 
                   {/* Weekly Scheduling */}
@@ -4202,6 +4557,199 @@ export default function App() {
                 </div>
 
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================================= */}
+      {/* 🔔 CONFIGURAÇÃO RÁPIDA DE LEMBRETES LOCAL/OFFLINE MODAL */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {isLocalTaskReminderModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 select-none">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.6 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsLocalTaskReminderModalOpen(false)}
+              className="absolute inset-0 bg-black/85 backdrop-blur-xs"
+            />
+
+            {/* Modal Dialog Body */}
+            <motion.div
+              initial={{ scale: 0.94, y: 15, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.94, y: 15, opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 280 }}
+              className="relative w-full max-w-md rounded-2xl bg-slate-900 border border-slate-800 p-5 sm:p-6 shadow-2xl overflow-hidden z-10"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between pb-4 border-b border-slate-850 mb-4">
+                <h3 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
+                  <Clock className="h-4.5 w-4.5 text-amber-500 shrink-0" />
+                  Lembrete Local de Tarefas
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setIsLocalTaskReminderModalOpen(false)}
+                  className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer animate-[pulse_3s_infinite]"
+                >
+                  <X className="h-4.5 w-4.5" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {/* Intro Info Banner */}
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-slate-300 text-[11px] leading-relaxed">
+                  <p className="font-extrabold text-amber-400 mb-1 flex items-center gap-1">
+                    🎯 Funcionamento Offline Ativo
+                  </p>
+                  Garante o disparo de alertas mesmo em instabilidade de rede ou totalmente sem internet. O motor interno do Citrino verifica diariamente suas tarefas pendentes agendadas para o dia no horário definido e dispara uma notificação nativa do sistema operacional.
+                </div>
+
+                {/* Toggle Enable */}
+                <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-bold text-slate-200 uppercase tracking-wide">Ativar Lembretes Locais</span>
+                    <span className="text-[10px] text-slate-500">Disparar alerta no horário escolhido</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setLocalTaskReminderEnabled(!localTaskReminderEnabled)}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      localTaskReminderEnabled ? 'bg-amber-500' : 'bg-slate-800'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                        localTaskReminderEnabled ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {/* Time Selection Input */}
+                <div className="space-y-1.5">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">
+                    Horário de Notificação Diária
+                  </label>
+                  <div className="relative">
+                    <Clock className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500 pointer-events-none" />
+                    <input
+                      type="time"
+                      value={localTaskReminderTime}
+                      disabled={!localTaskReminderEnabled}
+                      onChange={(e) => setLocalTaskReminderTime(e.target.value)}
+                      className={`w-full rounded-xl border border-slate-800 bg-slate-950 pl-9 pr-3 py-2 text-xs font-bold text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-amber-500 [color-scheme:dark] ${
+                        !localTaskReminderEnabled ? 'opacity-40 cursor-not-allowed' : ''
+                      }`}
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-500 block">
+                    No horário configurado, o aplicativo listará todas as tarefas pendentes de hoje.
+                  </span>
+                </div>
+
+                {/* Permissions Status Check */}
+                <div className="space-y-1.5 pt-1.5 border-t border-slate-850">
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">
+                    Permissão de Notificação do Navegador
+                  </label>
+                  <div className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <div className={`h-2 w-2 rounded-full ${
+                        notificationPermissionStatus === 'granted' ? 'bg-emerald-500 animate-pulse' :
+                        notificationPermissionStatus === 'denied' ? 'bg-red-500' : 'bg-amber-500'
+                      }`} />
+                      <span className="text-[11px] font-bold text-slate-350">
+                        {notificationPermissionStatus === 'granted' ? 'Notificações Permitidas' :
+                         notificationPermissionStatus === 'denied' ? 'Bloqueado (Ativar nas Config do Navegador)' :
+                         'Aguardando Autorização'}
+                      </span>
+                    </div>
+
+                    {notificationPermissionStatus !== 'granted' && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const granted = await requestNotificationPermission();
+                          setNotificationPermissionStatus(Notification.permission);
+                          if (granted) {
+                            try {
+                              new Notification('Lembrete Citrino Habilitado! 🎯', {
+                                body: 'Muito bem! Suas notificações locais estão prontas para disparar offline.',
+                              });
+                            } catch (e) {
+                              console.error(e);
+                            }
+                          }
+                        }}
+                        className="px-2.5 py-1 bg-amber-500 text-slate-950 font-black text-[9px] rounded-lg tracking-wide uppercase hover:brightness-110 cursor-pointer border-0"
+                      >
+                        Permitir
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Instant Test Alert Trigger */}
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (typeof window === 'undefined' || !('Notification' in window)) {
+                        alert('Seu navegador não suporta notificações de desktop.');
+                        return;
+                      }
+
+                      const todayTasks = tasks.filter(t => !t.completed && t.dueDate === todayStr);
+
+                      if (Notification.permission !== 'granted') {
+                        requestNotificationPermission().then(granted => {
+                          setNotificationPermissionStatus(Notification.permission);
+                          if (granted) {
+                            // Fire instant test
+                            const taskTitles = todayTasks.length > 0 
+                              ? todayTasks.map(t => `• ${t.title}`).join('\n')
+                              : 'Nenhuma tarefa programada para hoje.';
+                            new Notification('📅 Teste de Lembrete Local (Sucesso) 🎯', {
+                              body: `Disparado offline localmente!\nTarefas pendentes de hoje (${todayTasks.length}):\n${taskTitles}`,
+                              tag: 'citrino-local-tasks-reminder'
+                            });
+                          }
+                        });
+                      } else {
+                        // Permission is already granted, fire immediately
+                        const taskTitles = todayTasks.length > 0 
+                          ? todayTasks.map(t => `• ${t.title}`).join('\n')
+                          : 'Nenhuma tarefa programada para hoje.';
+                        new Notification('📅 Teste de Lembrete Local (Sucesso) 🎯', {
+                          body: `Disparado offline localmente!\nTarefas pendentes de hoje (${todayTasks.length}):\n${taskTitles}`,
+                          tag: 'citrino-local-tasks-reminder'
+                        });
+                      }
+                    }}
+                    className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-slate-950 hover:bg-slate-850 text-slate-300 hover:text-white border border-slate-800 rounded-xl text-[10px] font-extrabold tracking-widest uppercase transition-all duration-200 cursor-pointer"
+                  >
+                    <Volume2 className="h-3.5 w-3.5 shrink-0" />
+                    Testar Lembrete Agora 🔔
+                  </button>
+                </div>
+              </div>
+
+              {/* Bottom Actions Row */}
+              <div className="pt-4 mt-4 border-t border-slate-850 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsLocalTaskReminderModalOpen(false)}
+                  className="px-4.5 py-2 bg-gradient-to-r from-amber-500 to-amber-400 text-slate-950 font-black text-[10px] rounded-xl tracking-wider uppercase transition-colors hover:brightness-110 cursor-pointer border-0 shadow"
+                >
+                  Concluído ✨
+                </button>
+              </div>
+
             </motion.div>
           </div>
         )}
